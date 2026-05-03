@@ -1,12 +1,93 @@
 from datetime import datetime
 from enum import Enum
 from app import db
+
+
 class ResourceStatus(Enum):
     PENDING = 'pending'
     RUNNING = 'running'
     STOPPED = 'stopped'
     TERMINATED = 'terminated'
     FAILED = 'failed'
+
+
+vm_security_group_links = db.Table(
+    'vm_security_group_links',
+    db.Column('vm_id', db.Integer, db.ForeignKey('virtual_machines.id'), primary_key=True),
+    db.Column('security_group_id', db.Integer, db.ForeignKey('security_groups.id'), primary_key=True),
+)
+
+
+class SecurityGroup(db.Model):
+    """Virtual firewall security group attached to VMs."""
+    __tablename__ = 'security_groups'
+
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(120), nullable=False)
+    description = db.Column(db.Text)
+    org_id = db.Column(db.Integer, db.ForeignKey('organizations.id'), nullable=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    rules = db.relationship(
+        'SecurityGroupRule',
+        back_populates='group',
+        cascade='all, delete-orphan',
+        lazy='select',
+    )
+    vms = db.relationship(
+        'VirtualMachine',
+        secondary=vm_security_group_links,
+        back_populates='security_groups',
+        lazy='select',
+    )
+
+    __table_args__ = (
+        db.UniqueConstraint('org_id', 'name', name='uq_security_groups_org_name'),
+    )
+
+    def to_dict(self, include_rules=True):
+        return {
+            'id': self.id,
+            'name': self.name,
+            'description': self.description,
+            'org_id': self.org_id,
+            'created_at': self.created_at.isoformat() if self.created_at else None,
+            'rule_count': len(self.rules),
+            'vm_count': len(self.vms),
+            'rules': [rule.to_dict() for rule in self.rules] if include_rules else [],
+        }
+
+
+class SecurityGroupRule(db.Model):
+    """Inbound or outbound firewall rule for a security group."""
+    __tablename__ = 'security_group_rules'
+
+    id = db.Column(db.Integer, primary_key=True)
+    group_id = db.Column(db.Integer, db.ForeignKey('security_groups.id'), nullable=False)
+    direction = db.Column(db.String(20), nullable=False)  # inbound | outbound
+    protocol = db.Column(db.String(20), nullable=False)  # TCP | UDP | ICMP | All
+    port_range = db.Column(db.String(30), nullable=False)  # "22" or "80-443"
+    source_cidr = db.Column(db.String(50), nullable=False)
+    action = db.Column(db.String(20), nullable=False, default='allow')  # allow | deny
+    description = db.Column(db.String(255))
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    group = db.relationship('SecurityGroup', back_populates='rules')
+
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'group_id': self.group_id,
+            'direction': self.direction,
+            'protocol': self.protocol,
+            'port_range': self.port_range,
+            'source_cidr': self.source_cidr,
+            'action': self.action,
+            'description': self.description,
+            'created_at': self.created_at.isoformat() if self.created_at else None,
+        }
+
+
 class VirtualMachine(db.Model):
     """Simulated Virtual Machine."""
     __tablename__ = 'virtual_machines'
@@ -25,6 +106,7 @@ class VirtualMachine(db.Model):
     public_ip = db.Column(db.String(15))
     subnet_id = db.Column(db.String(50))
     vpc_id = db.Column(db.String(50))
+    subnet_type = db.Column(db.String(20), default='public')
     # Utilization Metrics (Real-time simulated)
     cpu_utilization = db.Column(db.Float, default=0.0)  # Percentage
     memory_utilization = db.Column(db.Float, default=0.0)  # Percentage
@@ -35,7 +117,12 @@ class VirtualMachine(db.Model):
     # Metadata
     image_id = db.Column(db.String(50))  # AMI ID
     key_name = db.Column(db.String(100))
-    security_groups = db.Column(db.JSON, default=list)
+    security_groups = db.relationship(
+        'SecurityGroup',
+        secondary=vm_security_group_links,
+        back_populates='vms',
+        lazy='select',
+    )
     tags = db.relationship('ResourceTag', backref='vm', lazy='dynamic')
     # Timestamps
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
@@ -73,8 +160,11 @@ class VirtualMachine(db.Model):
             'hourly_rate': self.hourly_rate,
             'current_cost': round(self.calculate_current_cost(), 4),
             'created_at': self.created_at.isoformat() if self.created_at else None,
-            'tags': [tag.to_dict() for tag in self.tags]
+            'tags': [tag.to_dict() for tag in self.tags],
+            'security_groups': [group.to_dict(include_rules=False) for group in self.security_groups],
         }
+
+
 class Database(db.Model):
     """Simulated Database Instance."""
     __tablename__ = 'databases'
@@ -136,6 +226,8 @@ class Database(db.Model):
             'current_cost': round(self.total_runtime_hours * self.hourly_rate, 4),
             'created_at': self.created_at.isoformat() if self.created_at else None
         }
+
+
 class ResourceTag(db.Model):
     """Tags for resources."""
     __tablename__ = 'resource_tags'
@@ -146,6 +238,8 @@ class ResourceTag(db.Model):
     value = db.Column(db.String(256))
     def to_dict(self):
         return {'key': self.key, 'value': self.value}
+
+
 class NetworkInterface(db.Model):
     """Network interfaces for VMs."""
     __tablename__ = 'network_interfaces'
@@ -157,3 +251,55 @@ class NetworkInterface(db.Model):
     private_ip = db.Column(db.String(15))
     public_ip = db.Column(db.String(15))
     status = db.Column(db.String(20))  # in-use, available
+
+
+class VPC(db.Model):
+    """Virtual Private Cloud for an organization."""
+    __tablename__ = 'vpcs'
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(100), nullable=False)
+    organization_id = db.Column(db.Integer, db.ForeignKey('organizations.id'))
+    cidr_block = db.Column(db.String(20), default='10.0.0.0/16')
+    region = db.Column(db.String(50), default='us-east-1')
+    is_default = db.Column(db.Boolean, default=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    subnets = db.relationship('Subnet', backref='vpc', lazy='select', cascade='all, delete-orphan')
+
+    def to_dict(self, include_subnets=True):
+        data = {
+            'id': self.id,
+            'name': self.name,
+            'organization_id': self.organization_id,
+            'cidr_block': self.cidr_block,
+            'region': self.region,
+            'is_default': self.is_default,
+            'created_at': self.created_at.isoformat() if self.created_at else None,
+        }
+        if include_subnets:
+            data['subnets'] = [s.to_dict() for s in self.subnets]
+        return data
+
+
+class Subnet(db.Model):
+    """Subnet within a VPC."""
+    __tablename__ = 'subnets'
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(100))
+    vpc_id = db.Column(db.Integer, db.ForeignKey('vpcs.id'))
+    organization_id = db.Column(db.Integer, db.ForeignKey('organizations.id'))
+    cidr_block = db.Column(db.String(20))
+    subnet_type = db.Column(db.String(20), default='public')
+    availability_zone = db.Column(db.String(20), default='us-east-1a')
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'name': self.name,
+            'vpc_id': self.vpc_id,
+            'organization_id': self.organization_id,
+            'cidr_block': self.cidr_block,
+            'subnet_type': self.subnet_type,
+            'availability_zone': self.availability_zone,
+            'created_at': self.created_at.isoformat() if self.created_at else None,
+        }

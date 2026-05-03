@@ -1,6 +1,6 @@
 from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required, get_jwt_identity
-from app import db
+from app import db, socketio
 from app.models.security import SecurityLog, ThreatDetection, RemediationAction, ThreatType, ThreatSeverity
 from app.models.organization import OrganizationMember
 from datetime import datetime, timedelta
@@ -141,14 +141,16 @@ def get_threats():
     """Get detected threats."""
     user_id = get_jwt_identity()
     org_id = request.args.get('organization_id', type=int)
+    if org_id is None:
+        org_id = request.args.get('org_id', type=int)
     member = OrganizationMember.query.filter_by(organization_id=org_id, user_id=user_id).first()
     if not member:
         return jsonify({'error': 'Access denied'}), 403
-    status = request.args.get('status', 'active')
-    threats = ThreatDetection.query.filter_by(
-        organization_id=org_id,
-        status=status
-    ).order_by(ThreatDetection.detected_at.desc()).all()
+    status = (request.args.get('status') or 'all').strip().lower()
+    query = ThreatDetection.query.filter_by(organization_id=org_id)
+    if status not in {'all', 'any', '*'}:
+        query = query.filter_by(status=status)
+    threats = query.order_by(ThreatDetection.detected_at.desc()).all()
     return jsonify({
         'threats': [t.to_dict() for t in threats],
         'summary': {
@@ -242,13 +244,14 @@ def resolve_threat(threat_id):
     threat.resolved_by = user_id
     db.session.commit()
     return jsonify({'message': 'Threat marked as resolved'}), 200
+@security_bp.route('/simulate', methods=['POST'])
 @security_bp.route('/simulate-attack', methods=['POST'])
 @jwt_required()
 def simulate_attack():
     """Simulate attack for training purposes."""
     user_id = get_jwt_identity()
     data = request.get_json()
-    org_id = data.get('organization_id')
+    org_id = data.get('organization_id') or data.get('org_id')
     member = OrganizationMember.query.filter_by(organization_id=org_id, user_id=user_id).first()
     if not member:
         return jsonify({'error': 'Access denied'}), 403
@@ -275,6 +278,15 @@ def simulate_attack():
     )
     db.session.add(threat)
     db.session.commit()
+
+    # Emit socket event so Security.jsx table updates in real time
+    socketio.emit(
+        'threats:update',
+        {'threat': threat.to_dict()},
+        room=f'org_{org_id}',
+        namespace='/metrics',
+    )
+
     return jsonify({
         'message': f'{attack_type.upper()} attack simulated',
         'threat_id': threat.id,

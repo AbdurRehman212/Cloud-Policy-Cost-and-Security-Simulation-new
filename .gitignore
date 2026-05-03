@@ -1,11 +1,55 @@
+# ── Environment & secrets ──────────────────────────────────────────────────────
+.env
+.env.*
 backend/.env
 frontend/.env
+
+# ── Python ─────────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+
+# ── Virtual environments ────────────────────────────────────────────────────────
+backend/venv/
 backend/.venv/
-backend/__pycache__/
+venv/
+.venv/
+
+# ── Flask / SQLite ──────────────────────────────────────────────────────────────
 backend/instance/*.db
+*.db
+*.sqlite3
+
+# ── Logs ───────────────────────────────────────────────────────────────────────
+*.log
+backend/backend.log
+backend.log
+frontend.log
+
+# ── Backup files ───────────────────────────────────────────────────────────────
+*.bak
+*.orig
+
+# ── Node / React ────────────────────────────────────────────────────────────────
 frontend/node_modules/
 frontend/build/
+node_modules/
+package-lock.json
+
+# ── IDE & tools ─────────────────────────────────────────────────────────────────
 .vscode/
+.idea/
 .codex
-*.pyc
-__pycache__/
+.roo/
+.roomodes
+
+# ── Ad-hoc test / utility scripts ───────────────────────────────────────────────
+test_*.py
+flow_test.py
+clear_resources.py
+
+# ── OS ──────────────────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db

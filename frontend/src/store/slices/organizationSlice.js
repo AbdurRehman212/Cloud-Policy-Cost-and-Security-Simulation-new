@@ -41,6 +41,9 @@ const organizationSlice = createSlice({
     setCurrentOrganization: (state, action) => {
       state.currentOrganization = action.payload;
     },
+    switchOrganization: (state, action) => {
+      state.currentOrganization = action.payload;
+    },
   },
   extraReducers: (builder) => {
     builder
@@ -59,5 +62,5 @@ const organizationSlice = createSlice({
       });
   },
 });
-export const { setCurrentOrganization } = organizationSlice.actions;
+export const { setCurrentOrganization, switchOrganization } = organizationSlice.actions;
 export default organizationSlice.reducer;

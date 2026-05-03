@@ -3,6 +3,7 @@ from flask_jwt_extended import jwt_required, get_jwt_identity
 from app import db
 from app.models.organization import Organization, OrganizationMember, Invitation, ensure_default_organization_membership
 from app.models.user import User
+from app.utils.rbac import require_org_role
 from datetime import datetime
 org_bp = Blueprint('organization', __name__)
 
@@ -37,6 +38,16 @@ def create_organization():
         role='owner'
     )
     db.session.add(member)
+    from app.routes.resources import _ensure_default_security_groups
+    _ensure_default_security_groups(org.id)
+    from app.models.resources import VPC, Subnet
+    vpc = VPC(name='default-vpc', organization_id=org.id, cidr_block='10.0.0.0/16', is_default=True)
+    db.session.add(vpc)
+    db.session.flush()
+    db.session.add(Subnet(name='public-subnet-1', vpc_id=vpc.id, organization_id=org.id,
+                          cidr_block='10.0.1.0/24', subnet_type='public', availability_zone='us-east-1a'))
+    db.session.add(Subnet(name='private-subnet-1', vpc_id=vpc.id, organization_id=org.id,
+                          cidr_block='10.0.2.0/24', subnet_type='private', availability_zone='us-east-1b'))
     db.session.commit()
     return _success({
         'message': 'Organization created',
@@ -103,6 +114,7 @@ def get_organization(org_id):
     return _success(data)
 @org_bp.route('/<int:org_id>/invite', methods=['POST'])
 @jwt_required()
+@require_org_role('admin')
 def invite_member(org_id):
     """Invite member to organization."""
     user_id = get_jwt_identity()
@@ -190,6 +202,7 @@ def accept_invitation():
     })
 @org_bp.route('/<int:org_id>/members/<int:member_id>', methods=['DELETE'])
 @jwt_required()
+@require_org_role('admin')
 def remove_member(org_id, member_id):
     """Remove member from organization."""
     user_id = get_jwt_identity()
@@ -211,6 +224,120 @@ def remove_member(org_id, member_id):
     db.session.delete(target_member)
     db.session.commit()
     return _success({'message': 'Member removed'})
+
+@org_bp.route('/<int:org_id>/members', methods=['GET'])
+@jwt_required()
+def list_members(org_id):
+    """List members of an organization."""
+    user_id = get_jwt_identity()
+    member = OrganizationMember.query.filter_by(organization_id=org_id, user_id=user_id).first()
+    if not member:
+        return _error('Access denied', status_code=403)
+    members = []
+    for m in OrganizationMember.query.filter_by(organization_id=org_id).all():
+        u = User.query.get(m.user_id)
+        if not u:
+            continue
+        members.append({
+            'id': m.id,
+            'user_id': u.id,
+            'name': f"{u.first_name} {u.last_name}".strip(),
+            'email': u.email,
+            'role': m.role,
+            'joined_at': m.joined_at.isoformat() if m.joined_at else None,
+        })
+    return _success({'members': members})
+
+
+@org_bp.route('/<int:org_id>/members/<int:target_user_id>/role', methods=['PUT'])
+@jwt_required()
+def update_member_role(org_id, target_user_id):
+    """Update a member's role."""
+    user_id = get_jwt_identity()
+    current = OrganizationMember.query.filter_by(organization_id=org_id, user_id=user_id).first()
+    if not current or current.role not in ['owner', 'admin']:
+        return _error('Insufficient permissions', status_code=403)
+    data = request.get_json() or {}
+    new_role = data.get('role')
+    if new_role not in ['admin', 'member', 'viewer']:
+        return _error('Invalid role', status_code=400)
+    target = OrganizationMember.query.filter_by(organization_id=org_id, user_id=target_user_id).first()
+    if not target:
+        return _error('Member not found', status_code=404)
+    if target.role == 'owner':
+        return _error('Cannot change owner role', status_code=403)
+    target.role = new_role
+    db.session.commit()
+    return _success({'message': 'Role updated', 'role': new_role})
+
+
+@org_bp.route('/<int:org_id>/quotas', methods=['GET'])
+@jwt_required()
+def get_quotas(org_id):
+    """Return resource quota usage for an organization."""
+    user_id = get_jwt_identity()
+    member = OrganizationMember.query.filter_by(organization_id=org_id, user_id=user_id).first()
+    if not member:
+        return _error('Access denied', status_code=403)
+    from app.models.resources import VirtualMachine, Database, ResourceStatus
+    from app.models.cost import CostRecord
+    from sqlalchemy import func
+    from datetime import date
+    vms_used = VirtualMachine.query.filter(
+        VirtualMachine.organization_id == org_id,
+        VirtualMachine.status != ResourceStatus.TERMINATED,
+    ).count()
+    dbs_used = Database.query.filter(
+        Database.organization_id == org_id,
+        Database.status != ResourceStatus.TERMINATED,
+    ).count()
+    budget_used = db.session.query(func.sum(CostRecord.total_cost)).filter(
+        CostRecord.organization_id == org_id,
+        CostRecord.date >= date(date.today().year, date.today().month, 1),
+    ).scalar() or 0.0
+    return _success({
+        'vms': {'used': vms_used, 'limit': 20},
+        'databases': {'used': dbs_used, 'limit': 10},
+        'storage': {'used': 0, 'limit': 100},
+        'budget': {'used': round(budget_used, 2), 'limit': 1000},
+    })
+
+
+@org_bp.route('/<int:org_id>', methods=['DELETE'])
+@jwt_required()
+def delete_organization(org_id):
+    """Soft-delete an organization (owner only)."""
+    user_id = get_jwt_identity()
+    org = Organization.query.get(org_id)
+    if not org:
+        return _error('Organization not found', status_code=404)
+    member = OrganizationMember.query.filter_by(organization_id=org_id, user_id=user_id).first()
+    if not member or member.role != 'owner':
+        return _error('Only owners can delete organizations', status_code=403)
+    org.is_active = False
+    db.session.commit()
+    return _success({'message': 'Organization deleted'})
+
+
+@org_bp.route('/<int:org_id>', methods=['PUT'])
+@jwt_required()
+def update_organization(org_id):
+    """Update organization name/description (admin+)."""
+    user_id = get_jwt_identity()
+    org = Organization.query.get(org_id)
+    if not org:
+        return _error('Organization not found', status_code=404)
+    member = OrganizationMember.query.filter_by(organization_id=org_id, user_id=user_id).first()
+    if not member or member.role not in ['owner', 'admin']:
+        return _error('Insufficient permissions', status_code=403)
+    data = request.get_json() or {}
+    if 'name' in data and data['name']:
+        org.name = data['name']
+    if 'description' in data:
+        org.description = data['description']
+    db.session.commit()
+    return _success({'message': 'Organization updated', 'organization': org.to_dict()})
+
 
 @org_bp.route('/invite_demo', methods=['POST'])
 @jwt_required()

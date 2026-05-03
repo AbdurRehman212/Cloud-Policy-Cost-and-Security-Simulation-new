@@ -124,5 +124,7 @@ def ensure_default_organization_membership(user):
         role='owner',
     )
     db.session.add(membership)
+    from app.routes.resources import _ensure_default_security_groups
+    _ensure_default_security_groups(organization.id)
 
     return organization, membership, True

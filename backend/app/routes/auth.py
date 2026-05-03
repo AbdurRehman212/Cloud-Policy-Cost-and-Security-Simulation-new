@@ -191,19 +191,33 @@ def update_profile():
     if not user:
         return _error('User not found', status_code=404)
     data = request.get_json() or {}
+    if 'display_name' in data and data['display_name']:
+        user.first_name = data['display_name']
     if 'first_name' in data:
         user.first_name = data['first_name']
     if 'last_name' in data:
         user.last_name = data['last_name']
-    if user.profile:
-        if 'phone' in data:
-            user.profile.phone = data['phone']
-        if 'department' in data:
-            user.profile.department = data['department']
-        if 'job_title' in data:
-            user.profile.job_title = data['job_title']
+    if not user.profile:
+        from app.models.user import UserProfile
+        user.profile = UserProfile(user_id=user.id)
+        db.session.add(user.profile)
+    if 'timezone' in data:
+        user.profile.timezone = data['timezone']
+    if 'phone' in data:
+        user.profile.phone = data['phone']
+    if 'department' in data:
+        user.profile.department = data['department']
+    if 'job_title' in data:
+        user.profile.job_title = data['job_title']
     db.session.commit()
-    return _success({'message': 'Profile updated', 'user': user.to_dict()})
+    return _success({
+        'message': 'Profile updated',
+        'user': user.to_dict(),
+        'profile': {
+            'timezone': user.profile.timezone if user.profile else 'UTC',
+            'phone': user.profile.phone if user.profile else None,
+        }
+    })
 @auth_bp.route('/forgot-password', methods=['POST'])
 def forgot_password():
     """Request password reset."""
