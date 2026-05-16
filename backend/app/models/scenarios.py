@@ -15,6 +15,7 @@ class ScenarioProgress(db.Model):
     started_at = db.Column(db.DateTime, default=datetime.utcnow)
     completed_at = db.Column(db.DateTime)
     points_earned = db.Column(db.Integer, default=0)
+    history = db.Column(db.JSON, default=list)
 
     __table_args__ = (
         db.UniqueConstraint('user_id', 'org_id', 'scenario_id', name='uq_scenario_progress_user_org_scenario'),

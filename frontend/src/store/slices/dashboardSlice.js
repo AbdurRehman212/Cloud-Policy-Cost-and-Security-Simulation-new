@@ -1,14 +1,55 @@
 import { createSlice, createAsyncThunk } from "@reduxjs/toolkit";
-import axios from "axios";
-const API_URL = "http://localhost:5000/api";
+import apiClient from "../../services/api";
+import { setCurrentOrganization, switchOrganization } from "./organizationSlice";
+
+const hasSnapshotBody = (payload) => (
+  payload
+  && typeof payload === "object"
+  && (
+    payload.resources
+    || payload.costs
+    || payload.security
+    || payload.utilization_trend
+    || payload.cost_trend
+    || payload.workload
+    || payload.capacity !== undefined
+    || payload.bpi !== undefined
+    || payload.target_bpi !== undefined
+  )
+);
+
+export const normalizeDashboardSnapshot = (payload, activeOrgId = null) => {
+  if (!hasSnapshotBody(payload)) {
+    return null;
+  }
+
+  const orgId = payload.org_id ?? payload.organization_id ?? activeOrgId ?? null;
+  if (activeOrgId !== null && orgId !== null && orgId !== activeOrgId) {
+    return null;
+  }
+  if (orgId === null) {
+    return null;
+  }
+
+  return {
+    ...payload,
+    org_id: orgId,
+    organization_id: payload.organization_id ?? orgId,
+  };
+};
+
+const getOrgId = (value) => {
+  if (value && typeof value === "object") {
+    return value.orgId ?? value.organization_id ?? value.org_id ?? null;
+  }
+  return value ?? null;
+};
 export const fetchDashboardSummary = createAsyncThunk(
   "dashboard/fetchSummary",
   async (orgId, { getState, rejectWithValue }) => {
     try {
-      const token = getState().auth.token;
-      const response = await axios.get(
-        `${API_URL}/dashboard/summary?organization_id=${orgId}`,
-        { headers: { Authorization: `Bearer ${token}` } },
+      const response = await apiClient.get(
+        `/dashboard/summary?organization_id=${orgId}`,
       );
       return response.data;
     } catch (error) {
@@ -19,47 +60,59 @@ export const fetchDashboardSummary = createAsyncThunk(
 const dashboardSlice = createSlice({
   name: "dashboard",
   initialState: {
+    activeOrgId: null,
     summary: null,
     loading: false,
     error: null,
   },
-  reducers: {},
+  reducers: {
+    updateDashboardState: (state, action) => {
+      const normalized = normalizeDashboardSnapshot(action.payload, state.activeOrgId);
+      if (!normalized) return;
+      state.summary = normalized;
+    },
+    clearDashboard: (state) => {
+      state.activeOrgId = null;
+      state.summary = null;
+      state.loading = false;
+      state.error = null;
+    },
+  },
   extraReducers: (builder) => {
     builder
-      .addCase(fetchDashboardSummary.pending, (state) => {
-        state.loading = true;
+      .addCase(setCurrentOrganization, (state, action) => {
+        state.activeOrgId = action.payload?.id ?? null;
+        state.summary = null;
+        state.loading = false;
         state.error = null;
       })
-      .addCase(fetchDashboardSummary.fulfilled, (state, action) => {
+      .addCase(switchOrganization, (state, action) => {
+        state.activeOrgId = action.payload?.id ?? null;
+        state.summary = null;
         state.loading = false;
-        console.log(action.payload);
-        const p = action.payload || {};
-        state.summary = {
-          ...p,
-          security_score: p.security_score ?? p.security?.score ?? 0,
-          compliance_score: p.compliance_score ?? p.compliance?.score ?? 0,
-          health_score: p.health_score_calculated ?? p.health_score ?? 0,
-          monthly_spend: p.costs?.total ?? p.monthly_spend ?? 0,
-          total_vms:
-            p.total_vms ?? p.resources?.vms?.total ?? p.resources?.total ?? 0,
-          running_vms:
-            p.running_vms ??
-            p.resources?.vms?.running ??
-            p.resources?.running ??
-            p.running ??
-            0,
-          running:
-            p.running_vms ??
-            p.resources?.vms?.running ??
-            p.resources?.running ??
-            p.running ??
-            0,
-        };
+        state.error = null;
+      })
+      .addCase(fetchDashboardSummary.pending, (state, action) => {
+        state.loading = true;
+        state.error = null;
+        state.activeOrgId = getOrgId(action.meta.arg);
+      })
+      .addCase(fetchDashboardSummary.fulfilled, (state, action) => {
+        if (state.activeOrgId !== getOrgId(action.meta.arg)) {
+          return;
+        }
+        state.loading = false;
+        const normalized = normalizeDashboardSnapshot(action.payload, state.activeOrgId);
+        state.summary = normalized || null;
       })
       .addCase(fetchDashboardSummary.rejected, (state, action) => {
+        if (state.activeOrgId !== getOrgId(action.meta.arg)) {
+          return;
+        }
         state.loading = false;
         state.error = action.payload || "Failed to fetch dashboard summary";
       });
   },
 });
+export const { updateDashboardState, clearDashboard } = dashboardSlice.actions;
 export default dashboardSlice.reducer;

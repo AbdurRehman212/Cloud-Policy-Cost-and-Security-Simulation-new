@@ -32,7 +32,7 @@ class User(db.Model):
     settings = db.relationship('UserSettings', backref='user', uselist=False)
     def set_password(self, password):
         """Hash and set user password."""
-        self.password_hash = generate_password_hash(password, method='pbkdf2:sha256')
+        self.password_hash = generate_password_hash(password, method='pbkdf2:sha256:100000')
     def check_password(self, password):
         """Verify password against hash."""
         return check_password_hash(self.password_hash, password)
@@ -83,3 +83,16 @@ class EmailVerification(db.Model):
             token=token,
             expires_at=expires
         )
+
+
+class TokenBlacklist(db.Model):
+    """Blacklisted JWT tokens for logout/invalidation."""
+    __tablename__ = 'token_blacklist'
+    id = db.Column(db.Integer, primary_key=True)
+    jti = db.Column(db.String(255), unique=True, nullable=False, index=True)
+    token_type = db.Column(db.String(20), default='refresh')
+    blacklisted_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    @staticmethod
+    def is_blacklisted(jti, token_type='refresh'):
+        return TokenBlacklist.query.filter_by(jti=jti, token_type=token_type).first() is not None

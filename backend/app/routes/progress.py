@@ -8,6 +8,17 @@ from app.models.user import User
 
 progress_bp = Blueprint('progress', __name__)
 
+# Centralized XP rules - backend owns reward policy
+XP_RULES = {
+    'vm_created': 10,
+    'db_created': 10,
+    'resource_deleted': 5,
+    'threat_resolved': 15,
+    'attack_simulated': 20,
+    'policy_created': 15,
+    'budget_created': 10,
+}
+
 
 def _resolve_org_id_for_user(user_id, preferred_org_id=None):
     """Resolve the organization ID for a user."""
@@ -28,13 +39,7 @@ def _resolve_org_id_for_user(user_id, preferred_org_id=None):
                 return preferred_org_id
         return sorted(allowed)[0]
     
-    # Ensure default organization if no memberships
-    user = User.query.get(user_id)
-    if not user:
-        return None
-    organization, _, _ = ensure_default_organization_membership(user)
-    db.session.commit()
-    return organization.id
+    return None
 
 
 def _get_or_create_progress(user_id, org_id):
@@ -83,17 +88,21 @@ def award_points():
     user_id = get_jwt_identity()
     data = request.get_json() or {}
     action = data.get('action', '').strip()
-    points = data.get('points', 0)
-    badge = data.get('badge')
+    # Ignore frontend points - use centralized XP_RULES
     org_id = data.get('org_id') or data.get('organization_id')
-    
+
     if not action:
         return jsonify({'status': 'error', 'error': {'message': 'Action is required'}}), 400
-    
+
+    # Get points from backend rules - deterministic reward policy
+    points = XP_RULES.get(action, 0)
+    if points == 0:
+        return jsonify({'status': 'error', 'error': {'message': 'Unknown action or no XP defined'}}), 400
+
     org_id = _resolve_org_id_for_user(user_id, org_id)
     if not org_id:
         return jsonify({'status': 'error', 'error': {'message': 'No organization found'}}), 400
-    
+
     progress = _get_or_create_progress(user_id, org_id)
     
     # Update counters based on action
@@ -103,6 +112,10 @@ def award_points():
         progress.vms_created += 1  # Count DBs as VMs for simplicity
     elif action == 'attack_simulated':
         progress.attacks_simulated += 1
+    elif action == 'threat_resolved':
+        progress.attacks_simulated += 1  # Count resolutions as security actions
+    elif action == 'resource_deleted':
+        pass  # No counter increment needed
     elif action == 'scenario_completed':
         scenario_id = data.get('scenario_id')
         if scenario_id:

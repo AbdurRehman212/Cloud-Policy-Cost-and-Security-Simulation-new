@@ -1,6 +1,46 @@
 """Learning content snippets for the platform overlay."""
 
 LEARNING_CONTENT = {
+    "scaling_failure": {
+        "aws_equivalent": "EC2 Auto Scaling + CloudWatch",
+        "azure_equivalent": "Virtual Machine Scale Sets + Azure Monitor",
+        "what_you_just_did": "You diagnosed a capacity bottleneck where queue growth outpaced available instances.",
+        "key_concept": "When demand exceeds capacity, latency rises until the platform scales out or the workload is reduced.",
+        "best_practice": "Watch saturation indicators and scale before the queue becomes user-visible delay.",
+        "next_step": "Compare BPI before and after scale-out to see how quickly the system returns to target.",
+        "difficulty": "beginner",
+        "certification_topic": "AWS SAA-C03 / AZ-104",
+    },
+    "cost_optimization": {
+        "aws_equivalent": "AWS Budgets + Compute Optimizer",
+        "azure_equivalent": "Azure Cost Management + Advisor",
+        "what_you_just_did": "You reviewed spend pressure and looked for wasteful or oversized resources.",
+        "key_concept": "Cost optimization is a tradeoff: keep enough capacity for the workload, but no more than necessary.",
+        "best_practice": "Use budgets, right-sizing, and idle resource cleanup as a recurring practice, not a one-time fix.",
+        "next_step": "Track monthly spend against the budget line to see whether the correction actually changes the trend.",
+        "difficulty": "intermediate",
+        "certification_topic": "AWS CLF-C02 / AZ-900",
+    },
+    "security_misconfiguration": {
+        "aws_equivalent": "Security Groups + GuardDuty",
+        "azure_equivalent": "NSG + Defender for Cloud",
+        "what_you_just_did": "You found a permissive rule that exposed the environment more than intended.",
+        "key_concept": "Security misconfiguration usually means the system works, but the defaults or exceptions leave it too open.",
+        "best_practice": "Apply least privilege, remove broad exposure, and review rules after every deployment.",
+        "next_step": "Watch the security score and active threat state after you tighten the rule.",
+        "difficulty": "advanced",
+        "certification_topic": "AWS SCS-C02 / AZ-500",
+    },
+    "disaster_recovery": {
+        "aws_equivalent": "AWS Backup + Multi-AZ recovery",
+        "azure_equivalent": "Azure Backup + Site Recovery",
+        "what_you_just_did": "You initiated a restore path after a service outage.",
+        "key_concept": "Recovery planning is about reducing downtime and proving the restore path works before a real incident.",
+        "best_practice": "Document recovery order, validate backups regularly, and rehearse failover before the outage happens.",
+        "next_step": "Check how quickly the health score returns once the restore completes.",
+        "difficulty": "advanced",
+        "certification_topic": "AWS SAA-C03 / AZ-104",
+    },
     "vm_created": {
         "aws_equivalent": "Amazon EC2 (Elastic Compute Cloud)",
         "azure_equivalent": "Azure Virtual Machines",

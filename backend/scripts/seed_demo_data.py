@@ -99,7 +99,7 @@ def seed_resources(org):
             network_out_mbps=98.0,
             image_id='ami-demo-001',
             key_name='demo-key',
-            security_groups=['sg-demo-web'],
+
             hourly_rate=0.0464,
             total_runtime_hours=48.5,
             launched_at=datetime.utcnow() - timedelta(days=2),

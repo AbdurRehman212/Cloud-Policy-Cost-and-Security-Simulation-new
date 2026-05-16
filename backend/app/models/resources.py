@@ -4,11 +4,38 @@ from app import db
 
 
 class ResourceStatus(Enum):
-    PENDING = 'pending'
-    RUNNING = 'running'
-    STOPPED = 'stopped'
+    """VM lifecycle states used throughout the simulation engine.
+
+    Values stored in the DB are the .value strings so the column
+    can be compared as plain VARCHAR (native_enum=False).
+
+    Lifecycle state machine:
+        PENDING (provisioning) → RUNNING
+        RUNNING → OVERLOADED | SCALING | TERMINATED
+        OVERLOADED → RUNNING | SCALING | TERMINATED
+        SCALING    → RUNNING | TERMINATED
+        TERMINATED is terminal
+
+    STOPPED and FAILED are kept for backward-compat with existing DB rows.
+    """
+    # ── Active lifecycle states ────────────────────────────────────────────
+    PENDING    = 'pending'      # alias: provisioning
+    RUNNING    = 'running'
+    OVERLOADED = 'overloaded'
+    SCALING    = 'scaling'
     TERMINATED = 'terminated'
-    FAILED = 'failed'
+    # ── Legacy / compat states ─────────────────────────────────────────────
+    STOPPED    = 'stopped'
+    FAILED     = 'failed'
+
+    @property
+    def is_provisioning(self) -> bool:
+        return self == ResourceStatus.PENDING
+
+    @property
+    def is_deletable(self) -> bool:
+        """A VM is deletable only when it is NOT in the provisioning state."""
+        return self != ResourceStatus.PENDING
 
 
 vm_security_group_links = db.Table(
@@ -89,14 +116,21 @@ class SecurityGroupRule(db.Model):
 
 
 class VirtualMachine(db.Model):
-    """Simulated Virtual Machine."""
+    """Simulated Virtual Machine with full lifecycle state machine.
+
+    States: pending (provisioning) → running → overloaded / scaling → terminated
+    Deletion rule: VM must NOT be in PENDING state to be deleted.
+    """
     __tablename__ = 'virtual_machines'
     id = db.Column(db.Integer, primary_key=True)
     organization_id = db.Column(db.Integer, db.ForeignKey('organizations.id'), nullable=False)
     name = db.Column(db.String(100), nullable=False)
     instance_id = db.Column(db.String(50), unique=True, nullable=False)  # i-xxxxxxxx
     instance_type = db.Column(db.String(50), nullable=False)  # t2.micro, etc.
-    status = db.Column(db.Enum(ResourceStatus), default=ResourceStatus.PENDING)
+    status = db.Column(
+        db.Enum(ResourceStatus, values_callable=lambda x: [e.value for e in x], native_enum=False),
+        default=ResourceStatus.PENDING
+    )
     # Specifications
     vcpu = db.Column(db.Integer, default=1)
     memory_gb = db.Column(db.Float, default=1.0)
@@ -129,6 +163,9 @@ class VirtualMachine(db.Model):
     launched_at = db.Column(db.DateTime)
     stopped_at = db.Column(db.DateTime)
     terminated_at = db.Column(db.DateTime)
+    # Workload model
+    requests_per_second = db.Column(db.Integer, default=50)
+    workload_pattern = db.Column(db.String(20), default='steady')  # steady | spiky | diurnal
     # Cost tracking
     hourly_rate = db.Column(db.Float, nullable=False)
     total_runtime_hours = db.Column(db.Float, default=0.0)
@@ -159,6 +196,8 @@ class VirtualMachine(db.Model):
             'network_out_mbps': round(self.network_out_mbps, 2),
             'hourly_rate': self.hourly_rate,
             'current_cost': round(self.calculate_current_cost(), 4),
+            'requests_per_second': self.requests_per_second or 50,
+            'workload_pattern': self.workload_pattern or 'steady',
             'created_at': self.created_at.isoformat() if self.created_at else None,
             'tags': [tag.to_dict() for tag in self.tags],
             'security_groups': [group.to_dict(include_rules=False) for group in self.security_groups],
@@ -175,7 +214,10 @@ class Database(db.Model):
     engine = db.Column(db.String(50), nullable=False)  # mysql, postgres, etc.
     engine_version = db.Column(db.String(20))
     instance_class = db.Column(db.String(50), nullable=False)  # db.t2.micro, etc.
-    status = db.Column(db.Enum(ResourceStatus), default=ResourceStatus.PENDING)
+    status = db.Column(
+        db.Enum(ResourceStatus, values_callable=lambda x: [e.value for e in x], native_enum=False),
+        default=ResourceStatus.PENDING
+    )
     # Specifications
     allocated_storage_gb = db.Column(db.Integer, default=20)
     max_storage_gb = db.Column(db.Integer, default=100)
@@ -187,8 +229,10 @@ class Database(db.Model):
     publicly_accessible = db.Column(db.Boolean, default=False)
     storage_encrypted = db.Column(db.Boolean, default=False)
     vpc_security_groups = db.Column(db.JSON, default=list)
+    tags = db.relationship('ResourceTag', backref='database', lazy='dynamic')
     # Performance Metrics
     cpu_utilization = db.Column(db.Float, default=0.0)
+    memory_utilization = db.Column(db.Float, default=0.0)
     free_storage_space = db.Column(db.Float, default=0.0)
     read_iops = db.Column(db.Float, default=0.0)
     write_iops = db.Column(db.Float, default=0.0)
@@ -224,7 +268,8 @@ class Database(db.Model):
             'database_connections': self.database_connections,
             'hourly_rate': self.hourly_rate,
             'current_cost': round(self.total_runtime_hours * self.hourly_rate, 4),
-            'created_at': self.created_at.isoformat() if self.created_at else None
+            'created_at': self.created_at.isoformat() if self.created_at else None,
+            'tags': [tag.to_dict() for tag in self.tags],
         }
 
 

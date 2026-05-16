@@ -3,6 +3,9 @@
 .env.*
 backend/.env
 frontend/.env
+.superpowers/
+.agents/
+.windsurf/
 
 # ── Python ─────────────────────────────────────────────────────────────────────
 __pycache__/
@@ -28,6 +31,15 @@ backend/backend.log
 backend.log
 frontend.log
 
+# ── Coverage / test output ──────────────────────────────────────────────────────
+coverage/
+.coverage
+.coverage.*
+e2e/playwright-report/
+e2e/test-results/
+playwright-report/
+test-results/
+
 # ── Backup files ───────────────────────────────────────────────────────────────
 *.bak
 *.orig
@@ -36,7 +48,13 @@ frontend.log
 frontend/node_modules/
 frontend/build/
 node_modules/
+build/
 package-lock.json
+*.tsbuildinfo
+.vite/
+.parcel-cache/
+.turbo/
+dist/
 
 # ── IDE & tools ─────────────────────────────────────────────────────────────────
 .vscode/
@@ -44,6 +62,7 @@ package-lock.json
 .codex
 .roo/
 .roomodes
+.eslintcache
 
 # ── Ad-hoc test / utility scripts ───────────────────────────────────────────────
 test_*.py

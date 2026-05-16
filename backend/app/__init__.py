@@ -15,26 +15,30 @@ jwt = JWTManager()
 mail = Mail()
 socketio = SocketIO(cors_allowed_origins="*", async_mode='eventlet', cors_credentials=True, ping_timeout=60, ping_interval=25)
 
+# Import simulation_engine after socketio to avoid circular imports
+from app.services.simulation_engine import SimulationEngine
+from flask_socketio import join_room, leave_room, rooms
+
+simulation_engine = SimulationEngine()
+
 
 @socketio.on('join_room', namespace='/metrics')
 def handle_join_room(data):
-    """Allow clients to join an org-scoped room on the /metrics namespace."""
+    """Allow clients to join an org-scoped room on the /metrics namespace and leave previous ones."""
     if isinstance(data, dict):
         org_id = data.get('org_id')
-        room = data.get('room')
-        if org_id:
-            join_room(f'org_{org_id}')
-        elif room:
+        try:
+            org_id = int(org_id)
+        except (TypeError, ValueError):
+            org_id = None
+
+        if org_id is not None:
+            room = f'org_{org_id}'
+            # Leave previous org rooms to prevent duplicate events and cross-org leakage
+            for r in rooms():
+                if r.startswith('org_') and r != room:
+                    leave_room(r)
             join_room(room)
-
-
-@socketio.on("join_room", namespace="/metrics")
-def handle_join(data):
-    """Handle room join with room parameter."""
-    from flask_socketio import join_room
-    room = data.get("room") if isinstance(data, dict) else None
-    if room:
-        join_room(room)
 
 
 def _json_error(message, status_code=500, code='internal_error'):
@@ -79,7 +83,7 @@ def create_app(config_name='default'):
     # Register blueprints
     from app.routes.auth import auth_bp
     from app.routes.organization import org_bp
-    from app.routes.resources import resource_bp, start_resource_updates
+    from app.routes.resources import resource_bp
     from app.routes.governance import governance_bp
     from app.routes.security import security_bp
     from app.routes.cost import cost_bp
@@ -90,9 +94,9 @@ def create_app(config_name='default'):
     from app.routes.learning import learning_bp
     from app.routes.scenarios import scenarios_bp
     from app.routes.membership import membership_bp
-    from app.routes.simulation_routes import simulation_bp
     from app.routes.progress import progress_bp
-    app.register_blueprint(simulation_bp, url_prefix='/api')
+    from app.routes.admin import admin_bp
+    app.register_blueprint(admin_bp, url_prefix='/api/admin')
     app.register_blueprint(auth_bp, url_prefix='/api/auth')
     app.register_blueprint(org_bp, url_prefix='/api/org')
     from app.routes.organization import simple_invite
@@ -109,54 +113,28 @@ def create_app(config_name='default'):
     app.register_blueprint(scenarios_bp, url_prefix='/api/scenarios')
     app.register_blueprint(membership_bp, url_prefix='/api/membership')
     app.register_blueprint(progress_bp, url_prefix='/api/progress')
+    from app.routes.learning_timeline import timeline_bp
+    app.register_blueprint(timeline_bp, url_prefix='/api/learning')
+
     # Create database tables
     with app.app_context():
         db.create_all()
+
         if not app.config.get('TESTING'):
-            # Reload existing DB resources into the simulator so metrics resume after restart
-            def _reload_simulator_resources():
-                from app.models.resources import VirtualMachine, Database, ResourceStatus
-                vms = VirtualMachine.query.filter(
-                    VirtualMachine.status == ResourceStatus.RUNNING
-                ).all()
-                dbs = Database.query.filter(
-                    Database.status == ResourceStatus.RUNNING
-                ).all()
-                total = len(vms) + len(dbs)
-                if total:
-                    app.logger.info(
-                        f'Simulator reload: found {len(vms)} running VMs and {len(dbs)} running DBs'
-                    )
-                else:
-                    app.logger.info('Simulator reload: no running resources found in DB')
-
-            _reload_simulator_resources()
-            start_resource_updates()
-
-            def stream_metrics(app, socketio):
-                with app.app_context():
-                    from app.models.organization import Organization
-                    while True:
-                        try:
-                            orgs = Organization.query.all()
-                            for org in orgs:
-                                snapshot = app.simulator.get_dashboard_snapshot(org.id)
-                                socketio.emit(
-                                    'metrics:snapshot',
-                                    snapshot,
-                                    room=f'org_{org.id}',
-                                    namespace='/metrics',
-                                )
-                        except Exception:
-                            app.logger.exception('stream_metrics error')
-                        socketio.sleep(5)
-
-            socketio.start_background_task(target=stream_metrics, app=app, socketio=socketio)
+            # ── Control-plane snapshot cache (2-second refresh) ───────────────
+            # Provides fast dashboard reads without blocking HTTP request threads
+            # on heavy simulation computation.
+            from app.services.control_plane import start_control_plane_loop
+            start_control_plane_loop()
 
         if app.config.get('ENABLE_REALTIME_METRICS') and not app.config.get('TESTING'):
             from app.services.metrics_streamer import metrics_streamer
-
             metrics_streamer.start()
+
+        # ResourceSimulator — handles DES telemetry, ML security analysis,
+        # per-VM RPS history, and autoscaling.  This is the primary simulation
+        # thread; control_plane.py provides the MAPE loop and snapshot cache.
         if app.config.get('ENABLE_SIMULATION_THREADS') and not app.config.get('TESTING'):
             app.simulator.start(app)
+
     return app

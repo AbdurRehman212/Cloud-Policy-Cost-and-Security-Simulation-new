@@ -1,4 +1,4 @@
-from flask import Blueprint, request, jsonify
+from flask import Blueprint, request, jsonify, current_app
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from app import db
 from app.models.organization import Organization, OrganizationMember, Invitation, ensure_default_organization_membership
@@ -14,6 +14,11 @@ def _success(data, status_code=200):
 
 def _error(message, status_code=400):
     return jsonify({'status': 'error', 'error': {'message': message}}), status_code
+
+
+def _frontend_url(path):
+    base_url = current_app.config.get('FRONTEND_BASE_URL') or request.host_url.rstrip('/')
+    return f"{base_url}{path}" if base_url else path
 @org_bp.route('/', methods=['POST'])
 @jwt_required()
 def create_organization():
@@ -59,13 +64,6 @@ def list_organizations():
     """List user's organizations."""
     user_id = get_jwt_identity()
     memberships = OrganizationMember.query.filter_by(user_id=user_id).all()
-
-    if not memberships:
-        user = User.query.get(user_id)
-        if user:
-            ensure_default_organization_membership(user)
-            db.session.commit()
-            memberships = OrganizationMember.query.filter_by(user_id=user_id).all()
 
     orgs = []
     for membership in memberships:
@@ -118,13 +116,6 @@ def get_organization(org_id):
 def invite_member(org_id):
     """Invite member to organization."""
     user_id = get_jwt_identity()
-    # Check permissions
-    member = OrganizationMember.query.filter_by(
-        organization_id=org_id,
-        user_id=user_id
-    ).first()
-    if not member or member.role not in ['owner', 'admin']:
-        return _error('Insufficient permissions', status_code=403)
     data = request.get_json() or {}
     email = data.get('email', '').lower().strip()
     role = data.get('role', 'member')
@@ -152,7 +143,7 @@ def invite_member(org_id):
             f'Invitation to join {org.name}',
             recipients=[email]
         )
-        invite_url = f"http://localhost:3000/accept-invite?token={invitation.token}"
+        invite_url = _frontend_url(f"/accept-invite?token={invitation.token}")
         inviter = User.query.get(user_id)
         msg.body = f"""
         You've been invited to join {org.name} on Cloud Policy, Cost & Security Simulator.
@@ -205,14 +196,6 @@ def accept_invitation():
 @require_org_role('admin')
 def remove_member(org_id, member_id):
     """Remove member from organization."""
-    user_id = get_jwt_identity()
-    # Check permissions
-    current_member = OrganizationMember.query.filter_by(
-        organization_id=org_id,
-        user_id=user_id
-    ).first()
-    if not current_member or current_member.role not in ['owner', 'admin']:
-        return _error('Insufficient permissions', status_code=403)
     target_member = OrganizationMember.query.get(member_id)
     if not target_member:
         return _error('Member not found', status_code=404)
@@ -279,6 +262,8 @@ def get_quotas(org_id):
     member = OrganizationMember.query.filter_by(organization_id=org_id, user_id=user_id).first()
     if not member:
         return _error('Access denied', status_code=403)
+    org = Organization.query.get(org_id)
+    resource_limit = int(getattr(org, 'max_resources', 50) or 50)
     from app.models.resources import VirtualMachine, Database, ResourceStatus
     from app.models.cost import CostRecord
     from sqlalchemy import func
@@ -296,8 +281,8 @@ def get_quotas(org_id):
         CostRecord.date >= date(date.today().year, date.today().month, 1),
     ).scalar() or 0.0
     return _success({
-        'vms': {'used': vms_used, 'limit': 20},
-        'databases': {'used': dbs_used, 'limit': 10},
+        'vms': {'used': vms_used, 'limit': resource_limit},
+        'databases': {'used': dbs_used, 'limit': resource_limit},
         'storage': {'used': 0, 'limit': 100},
         'budget': {'used': round(budget_used, 2), 'limit': 1000},
     })
@@ -350,14 +335,18 @@ def simple_invite():
 
     if not email:
         return _error('Email required', status_code=400)
-    if role not in ['admin', 'member', 'viewer', 'owner']:
+    if role not in ['admin', 'member', 'viewer']:
         return _error('Invalid role', status_code=400)
 
     memberships = OrganizationMember.query.filter_by(user_id=user_id).all()
     if not memberships:
         return _error('You must belong to an organization', status_code=400)
-    
-    org_id = data.get('organization_id') or memberships[0].organization_id
+
+    org_id = data.get('organization_id') or data.get('org_id')
+    if org_id is None:
+        if len(memberships) > 1:
+            return _error('organization_id required when you belong to multiple organizations', status_code=400)
+        org_id = memberships[0].organization_id
 
     current_member = OrganizationMember.query.filter_by(organization_id=org_id, user_id=user_id).first()
     if not current_member or current_member.role not in ['owner', 'admin']:

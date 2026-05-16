@@ -3,7 +3,8 @@ from flask import current_app
 from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from app import db, socketio
-from app.services.simulation_engine import generate_metrics
+from app.services.learning_context_engine import learning_context_service
+from app.services.operational_event_service import operational_event_service
 from app.models.resources import (
     VirtualMachine,
     Database,
@@ -19,8 +20,6 @@ from app.models.user import User
 from app.models.governance import AuditLog
 from app.config import Config
 from app.utils.rbac import require_org_role
-from threading import Lock
-from time import monotonic
 import logging
 import math
 import random
@@ -30,12 +29,72 @@ import ipaddress
 resource_bp = Blueprint('resources', __name__)
 logger = logging.getLogger(__name__)
 
-# ── Background updater state (no longer an in-memory resource store) ──────────
-_RESOURCE_UPDATER_LOCK = Lock()
-_RESOURCE_UPDATER_RUNNING = False
-_RESOURCE_UPDATER_TASK = None
-_RESOURCE_LAST_UPDATE_MONOTONIC = 0.0
-RESOURCE_UPDATE_INTERVAL_SECONDS = 5
+# XP point values for actions
+XP_VALUES = {
+    'vm_created': 10,
+    'vm_deleted': 5,
+    'db_created': 10,
+    'db_deleted': 5,
+    'attack_simulated': 15,
+    'scenario_completed': 25,
+    'policy_created': 10,
+    'budget_created': 10,
+}
+
+
+def _award_xp_for_action(user_id, org_id, action):
+    """Award XP and update progress for an action."""
+    try:
+        from app.models.progress import UserProgress
+
+        progress = UserProgress.query.filter_by(user_id=user_id, org_id=org_id).first()
+        if not progress:
+            progress = UserProgress(user_id=user_id, org_id=org_id)
+            db.session.add(progress)
+            db.session.flush()
+
+        points = XP_VALUES.get(action, 5)
+
+        if action == 'vm_created':
+            progress.vms_created += 1
+        elif action == 'db_created':
+            progress.vms_created += 1  # Count DBs as VMs for simplicity
+        elif action == 'attack_simulated':
+            progress.attacks_simulated += 1
+        elif action == 'policy_created' or action == 'budget_created':
+            progress.policies_created += 1
+
+        progress.total_points += points
+        old_level = progress.level
+        progress.update_level()
+        new_level = progress.level
+
+        # Check for new badges
+        new_badges = progress.check_badge_conditions()
+        for badge_name in new_badges:
+            if badge_name not in (progress.badges or []):
+                badges = progress.badges or []
+                badges.append(badge_name)
+                progress.badges = badges
+
+        db.session.commit()
+        logger.info(f"[XP] user={user_id} action={action} points={points} level={old_level}->{new_level}")
+    except Exception as e:
+        logger.warning(f"[XP] Failed to award XP: action={action} user_id={user_id} org_id={org_id} error={e}")
+        db.session.rollback()
+
+
+def _record_operational_lifecycle_event(user_id, org_id, event_type, resource_type, resource_id, details):
+    """Persist a lifecycle event so the learning timeline survives resource deletion."""
+    operational_event_service.record_event(
+        user_id=user_id,
+        org_id=org_id,
+        event_type=event_type,
+        resource_type=resource_type,
+        resource_id=str(resource_id),
+        details=details,
+    )
+
 
 # ── Instance type catalogue ────────────────────────────────────────────────────
 INSTANCE_TYPES = {
@@ -134,14 +193,7 @@ def _ensure_org_membership(user_id):
     if memberships:
         return {m.organization_id for m in memberships}
 
-    user = User.query.get(user_id)
-    if not user:
-        return set()
-
-    organization, _, created = ensure_default_organization_membership(user)
-    if created:
-        db.session.commit()
-    return {organization.id}
+    return set()
 
 
 def _resolve_org_id_for_user(user_id, preferred_org_id=None):
@@ -156,6 +208,15 @@ def _resolve_org_id_for_user(user_id, preferred_org_id=None):
     if preferred_org_id in allowed:
         return preferred_org_id
     return sorted(allowed)[0]
+
+
+def _resolve_request_org_id(user_id):
+    data = request.get_json(silent=True) or {}
+    preferred_org_id = request.args.get(
+        'organization_id',
+        request.args.get('org_id', data.get('organization_id', data.get('org_id'))),
+    )
+    return _resolve_org_id_for_user(user_id, preferred_org_id)
 
 
 def _sanitize_metric(value, fallback=0.05):
@@ -397,6 +458,7 @@ def _vm_to_envelope(vm: VirtualMachine) -> dict:
         'base_cpu': base_cpu,
         'base_memory': base_mem,
         'seed': vm.id * 1000 + 7,
+        'org_id': vm.organization_id,
         'organization_id': vm.organization_id,
         'region': 'us-east-1',
         'private_ip': vm.private_ip,
@@ -431,6 +493,7 @@ def _db_to_envelope(database: Database) -> dict:
         'base_cpu': cpu_norm,
         'base_memory': mem_norm,
         'seed': database.id * 1000 + 13,
+        'org_id': database.organization_id,
         'organization_id': database.organization_id,
         'region': 'us-east-1',
         'hourly_rate': database.hourly_rate,
@@ -440,103 +503,17 @@ def _db_to_envelope(database: Database) -> dict:
     }
 
 
-def _task_is_alive(task):
-    if task is None:
-        return False
-    alive_callable = getattr(task, 'is_alive', None)
-    if callable(alive_callable):
-        try:
-            return bool(alive_callable())
-        except Exception:
-            return True
-    dead_flag = getattr(task, 'dead', None)
-    if dead_flag is not None:
-        return not bool(dead_flag)
-    return True
-
-
-# ── Background resource updater ────────────────────────────────────────────────
-
-def _resource_update_loop(app):
-    """Background task: refresh DB metrics every 5s and emit to Socket.IO rooms."""
-    with app.app_context():
-        while True:
-            try:
-                # Gather all running VMs and DBs
-                vms = VirtualMachine.query.filter_by(status=ResourceStatus.RUNNING).all()
-                dbs = Database.query.filter_by(status=ResourceStatus.RUNNING).all()
-
-                # Get a dataset metric point for variation
-                metrics = generate_metrics(points=1)
-                base_metric = metrics[0] if metrics else {}
-                dataset_cpu = float(base_metric.get('cpu', 0.4) or 0.4)
-                dataset_mem = float(base_metric.get('memory', 0.35) or 0.35)
-
-                org_snapshots: dict[int, list] = {}
-
-                for vm in vms:
-                    spec = INSTANCE_TYPES.get(vm.instance_type, {})
-                    base_cpu_pct = spec.get('baseline_cpu', 0.3) * 100
-                    base_mem_pct = spec.get('baseline_memory', 0.4) * 100
-                    # Smooth toward dataset value with small sinusoidal variation
-                    phase = (vm.id * 37 + int(monotonic() / 5)) % 360
-                    cpu_variation = 8 * math.sin(math.radians(phase))
-                    mem_variation = 7 * math.cos(math.radians((phase * 3) % 360))
-                    new_cpu = max(0.0, min(100.0, base_cpu_pct + dataset_cpu * 20 + cpu_variation))
-                    new_mem = max(0.0, min(100.0, base_mem_pct + dataset_mem * 15 + mem_variation))
-                    vm.cpu_utilization = round(new_cpu, 2)
-                    vm.memory_utilization = round(new_mem, 2)
-                    vm.total_runtime_hours += RESOURCE_UPDATE_INTERVAL_SECONDS / 3600
-
-                    envelope = _vm_to_envelope(vm)
-                    org_snapshots.setdefault(vm.organization_id, []).append(envelope)
-
-                for database in dbs:
-                    phase = (database.id * 53 + int(monotonic() / 5)) % 360
-                    cpu_variation = 6 * math.sin(math.radians(phase))
-                    new_cpu = max(0.0, min(100.0, 25 + dataset_cpu * 15 + cpu_variation))
-                    database.cpu_utilization = round(new_cpu, 2)
-                    database.total_runtime_hours += RESOURCE_UPDATE_INTERVAL_SECONDS / 3600
-
-                    envelope = _db_to_envelope(database)
-                    org_snapshots.setdefault(database.organization_id, []).append(envelope)
-
-                db.session.commit()
-
-                # Emit per-org scoped updates
-                for org_id, org_resources in org_snapshots.items():
-                    socketio.emit(
-                        'resources:update',
-                        {'status': 'success', 'data': org_resources},
-                        room=f'org_{org_id}',
-                        namespace='/metrics',
-                    )
-            except Exception:
-                logger.exception('Failed to refresh DB resource simulation state')
-
-            socketio.sleep(RESOURCE_UPDATE_INTERVAL_SECONDS)
-
-
-def start_resource_updates():
-    """Start the shared resource updater only once."""
-    global _RESOURCE_UPDATER_RUNNING, _RESOURCE_UPDATER_TASK
-
-    with _RESOURCE_UPDATER_LOCK:
-        if _RESOURCE_UPDATER_RUNNING and _task_is_alive(_RESOURCE_UPDATER_TASK):
-            return
-        if _task_is_alive(_RESOURCE_UPDATER_TASK):
-            _RESOURCE_UPDATER_RUNNING = True
-            return
-        _RESOURCE_UPDATER_RUNNING = True
-        _RESOURCE_UPDATER_TASK = socketio.start_background_task(_resource_update_loop, current_app._get_current_object())
-
-
 # ── Provisioning helpers ───────────────────────────────────────────────────────
 
 def _complete_vm_creation(vm_id: int, app):
-    """Transition VM from PENDING → RUNNING after a short provisioning window."""
+    """Transition VM from PENDING → RUNNING after a fixed provisioning window.
+
+    Also registers the VM in the VMRegistry so metric computation
+    and deletion guards work correctly from the first tick.
+    """
     with app.app_context():
-        socketio.sleep(random.uniform(2.0, 3.0))
+        # Fixed delay for determinism in system-wide validation
+        socketio.sleep(2.5)
         vm = VirtualMachine.query.get(vm_id)
         if vm and vm.status == ResourceStatus.PENDING:
             spec = INSTANCE_TYPES.get(vm.instance_type, {})
@@ -545,6 +522,7 @@ def _complete_vm_creation(vm_id: int, app):
             vm.cpu_utilization = round(spec.get('baseline_cpu', 0.2) * 100, 2)
             vm.memory_utilization = round(spec.get('baseline_memory', 0.3) * 100, 2)
             db.session.commit()
+
             envelope = _vm_to_envelope(vm)
             socketio.emit(
                 'vm_created',
@@ -555,9 +533,10 @@ def _complete_vm_creation(vm_id: int, app):
 
 
 def _complete_db_creation(db_id: int, app):
-    """Transition Database from PENDING → RUNNING after a short provisioning window."""
+    """Transition Database from PENDING → RUNNING after a fixed provisioning window."""
     with app.app_context():
-        socketio.sleep(random.uniform(2.0, 3.0))
+        # Fixed delay for determinism
+        socketio.sleep(2.5)
         database = Database.query.get(db_id)
         if database and database.status == ResourceStatus.PENDING:
             database.cpu_utilization = 5.0
@@ -570,6 +549,97 @@ def _complete_db_creation(db_id: int, app):
                 room=f'org_{database.organization_id}',
                 namespace='/metrics',
             )
+            _emit_resource_update(database.organization_id)
+
+
+def _provision_vm_record(org_id, data):
+    """Create a VM row and schedule its provisioning transition."""
+    from app.models.organization import Organization
+    active_vms = VirtualMachine.query.filter(
+        VirtualMachine.organization_id == org_id,
+        VirtualMachine.status != ResourceStatus.TERMINATED,
+    ).count()
+    active_dbs = Database.query.filter(
+        Database.organization_id == org_id,
+        Database.status != ResourceStatus.TERMINATED,
+    ).count()
+    org = Organization.query.get(org_id)
+    resource_limit = int(getattr(org, 'max_resources', 50) or 50)
+    if active_vms + active_dbs >= resource_limit:
+        return None, _error(f'Quota exceeded: maximum {resource_limit} resources per organization', status_code=400)
+
+    instance_type = data.get('instance_type', 't2.micro')
+    spec = INSTANCE_TYPES.get(instance_type, INSTANCE_TYPES['t2.micro'])
+    name = (data.get('name') or '').strip() or f"VM-{generate_instance_id('i')[:8]}"
+    _ensure_default_security_groups(org_id)
+
+    vm = VirtualMachine(
+        organization_id=org_id,
+        name=name,
+        instance_id=generate_instance_id('i'),
+        instance_type=instance_type,
+        status=ResourceStatus.PENDING,
+        vcpu=spec['vcpu'],
+        memory_gb=spec['memory_gb'],
+        storage_gb=data.get('storage_gb', 8),
+        private_ip=_random_private_ip(),
+        cpu_utilization=spec['baseline_cpu'] * 100,
+        memory_utilization=spec['baseline_memory'] * 100,
+        hourly_rate=spec['hourly_rate'],
+        total_runtime_hours=0.0,
+        requests_per_second=data.get('requests_per_second', random.randint(10, 100)),
+        workload_pattern=data.get('workload_pattern', random.choice(['steady', 'spiky', 'diurnal'])),
+    )
+    db.session.add(vm)
+    db.session.flush()
+    group_ids = _parse_security_group_ids(data)
+    groups, error = _attach_security_groups_to_vm(vm, group_ids)
+    if error:
+        db.session.rollback()
+        return None, _error(error, status_code=400)
+    db.session.commit()
+    socketio.start_background_task(_complete_vm_creation, vm.id, current_app._get_current_object())
+    return vm, None
+
+
+def _provision_database_record(org_id, data):
+    """Create a Database row and schedule its provisioning transition."""
+    from app.models.organization import Organization
+    active_vms = VirtualMachine.query.filter(
+        VirtualMachine.organization_id == org_id,
+        VirtualMachine.status != ResourceStatus.TERMINATED,
+    ).count()
+    active_dbs = Database.query.filter(
+        Database.organization_id == org_id,
+        Database.status != ResourceStatus.TERMINATED,
+    ).count()
+    org = Organization.query.get(org_id)
+    resource_limit = int(getattr(org, 'max_resources', 50) or 50)
+    if active_vms + active_dbs >= resource_limit:
+        return None, _error(f'Quota exceeded: maximum {resource_limit} resources per organization', status_code=400)
+
+    engine = data.get('engine', 'PostgreSQL')
+    name = (data.get('name') or '').strip() or f"DB-{generate_instance_id('db')[:8]}"
+    hourly_rate = DB_ENGINE_RATES.get(engine, 0.025)
+
+    database = Database(
+        organization_id=org_id,
+        name=name,
+        instance_id=generate_instance_id('db'),
+        engine=engine,
+        engine_version='14.0',
+        instance_class=data.get('instance_class', 'db.t2.micro'),
+        status=ResourceStatus.PENDING,
+        allocated_storage_gb=data.get('storage_gb', 20),
+        cpu_utilization=5.0,
+        database_connections=0,
+        hourly_rate=hourly_rate,
+        total_runtime_hours=0.0,
+    )
+    db.session.add(database)
+    db.session.commit()
+    socketio.start_background_task(_complete_db_creation, database.id, current_app._get_current_object())
+    return database, None
 
 
 # ── Routes ─────────────────────────────────────────────────────────────────────
@@ -671,71 +741,74 @@ def create_resource():
     if not check_org_access(user_id, org_id, 'member'):
         return _error('Permission denied', status_code=403)
 
-    # Quota: max 5 active resources per org
-    active_vms = VirtualMachine.query.filter(
-        VirtualMachine.organization_id == org_id,
-        VirtualMachine.status != ResourceStatus.TERMINATED,
-    ).count()
-    active_dbs = Database.query.filter(
-        Database.organization_id == org_id,
-        Database.status != ResourceStatus.TERMINATED,
-    ).count()
-    if active_vms + active_dbs >= 5:
-        return _error('Quota exceeded: maximum 5 resources per organization', status_code=400)
-
     if resource_type == 'vm':
         instance_type = data.get('instance_type', 't2.micro')
-        spec = INSTANCE_TYPES.get(instance_type, INSTANCE_TYPES['t2.micro'])
-        name = (data.get('name') or '').strip() or f"VM-{generate_instance_id('i')[:8]}"
-        _ensure_default_security_groups(org_id)
-        vm = VirtualMachine(
-            organization_id=org_id,
-            name=name,
-            instance_id=generate_instance_id('i'),
-            instance_type=instance_type,
-            status=ResourceStatus.PENDING,
-            vcpu=spec['vcpu'],
-            memory_gb=spec['memory_gb'],
-            storage_gb=data.get('storage_gb', 8),
-            private_ip=_random_private_ip(),
-            cpu_utilization=spec['baseline_cpu'] * 100,
-            memory_utilization=spec['baseline_memory'] * 100,
-            hourly_rate=spec['hourly_rate'],
-            total_runtime_hours=0.0,
-        )
-        db.session.add(vm)
-        db.session.flush()
-        group_ids = _parse_security_group_ids(data)
-        groups, error = _attach_security_groups_to_vm(vm, group_ids)
+        vm, error = _provision_vm_record(org_id, data)
         if error:
-            db.session.rollback()
-            return _error(error, status_code=400)
-        db.session.commit()
+            return error
         _emit_resource_update(org_id)
-        socketio.start_background_task(_complete_vm_creation, vm.id, current_app._get_current_object())
-        return _success(_vm_to_envelope(vm), status_code=201)
+
+        # Award XP for VM creation
+        _award_xp_for_action(user_id, org_id, 'vm_created')
+
+        # Record persistent operational event
+        operational_event_service.record_event(
+            user_id=user_id,
+            org_id=org_id,
+            event_type='vm_created',
+            resource_type='vm',
+            resource_id=str(vm.id),
+            details={
+                'instance_type': instance_type,
+                'name': vm.name,
+                'hourly_rate': float(vm.hourly_rate or 0),
+            }
+        )
+
+        # Generate learning context
+        total_vms = VirtualMachine.query.filter_by(
+            organization_id=org_id, status=ResourceStatus.RUNNING
+        ).count()
+        learning_context = learning_context_service.for_vm_created(
+            instance_type, vm.name,
+            current_cost=float(vm.hourly_rate or 0),
+            total_vms=total_vms
+        )
+
+        response_data = _vm_to_envelope(vm)
+        response_data['learning_context'] = {
+            'title': learning_context.title,
+            'summary': learning_context.summary,
+            'cloud_equivalent': learning_context.cloud_equivalent,
+            'azure_equivalent': learning_context.azure_equivalent,
+            'cost_impact': learning_context.cost_impact,
+            'operational_meaning': learning_context.operational_meaning,
+            'optimization_insight': learning_context.optimization_insight,
+            'learning_explanation': learning_context.learning_explanation,
+            'severity': learning_context.severity,
+        }
+        return _success(response_data, status_code=201)
 
     else:
-        engine = data.get('engine', 'PostgreSQL')
-        name = (data.get('name') or '').strip() or f"DB-{generate_instance_id('db')[:8]}"
-        hourly_rate = DB_ENGINE_RATES.get(engine, 0.025)
-        database = Database(
-            organization_id=org_id,
-            name=name,
-            instance_id=generate_instance_id('db'),
-            engine=engine,
-            engine_version='14.0',
-            instance_class=data.get('instance_class', 'db.t2.micro'),
-            status=ResourceStatus.PENDING,
-            allocated_storage_gb=data.get('storage_gb', 20),
-            cpu_utilization=5.0,
-            database_connections=0,
-            hourly_rate=hourly_rate,
-            total_runtime_hours=0.0,
+        database, error = _provision_database_record(org_id, data)
+        if error:
+            return error
+
+        # Award XP for database creation
+        _award_xp_for_action(user_id, org_id, 'db_created')
+        _record_operational_lifecycle_event(
+            user_id=user_id,
+            org_id=org_id,
+            event_type='db_created',
+            resource_type='database',
+            resource_id=database.id,
+            details={
+                'engine': database.engine,
+                'name': database.name,
+                'hourly_rate': float(database.hourly_rate or 0),
+            },
         )
-        db.session.add(database)
-        db.session.commit()
-        socketio.start_background_task(_complete_db_creation, database.id, current_app._get_current_object())
+        _emit_resource_update(org_id)
         return _success(_db_to_envelope(database), status_code=201)
 
 
@@ -924,23 +997,93 @@ def attach_security_groups_to_vm(resource_id):
 @jwt_required()
 @require_org_role('member')
 def delete_resource(resource_id):
-    """Terminate (soft-delete) a resource."""
+    """Terminate (soft-delete) a resource.
+
+    VM lifecycle rule: A VM in PROVISIONING (PENDING) state CANNOT be deleted.
+    On successful deletion:
+      - metrics are zeroed
+      - cost is frozen at its current value
+      - registry entry is removed (no orphan VMs)
+    """
     user_id = get_jwt_identity()
+    org_id = _resolve_request_org_id(user_id)
+    if org_id is None:
+        return _error('organization_id required', status_code=400)
 
     vm = VirtualMachine.query.filter(
         VirtualMachine.id == resource_id,
+        VirtualMachine.organization_id == org_id,
         VirtualMachine.status != ResourceStatus.TERMINATED,
     ).first()
     if vm:
         if not check_org_access(user_id, vm.organization_id, 'admin'):
             return _error('Permission denied', status_code=403)
+
+        # ── Lifecycle guard: PENDING VMs cannot be deleted ─────────────────────
+        if vm.status == ResourceStatus.PENDING:
+            logger.warning(
+                "[delete_resource] Blocked deletion of PROVISIONING VM vm_id=%s org=%d",
+                vm.instance_id, vm.organization_id,
+            )
+            return _error(
+                'Cannot delete a VM that is still provisioning. Wait for it to reach running state.',
+                status_code=409,
+                code='vm_provisioning',
+            )
+
+        # ── Zero metrics (no orphan metric state) ──────────────────────────────
+        final_cost = vm.calculate_current_cost()
+        vm.cpu_utilization = 0.0
+        vm.memory_utilization = 0.0
+        vm.disk_read_iops = 0.0
+        vm.disk_write_iops = 0.0
+        vm.network_in_mbps = 0.0
+        vm.network_out_mbps = 0.0
         vm.status = ResourceStatus.TERMINATED
         vm.terminated_at = datetime.utcnow()
         db.session.commit()
+
+        # Award XP for VM deletion
+        _award_xp_for_action(user_id, vm.organization_id, 'vm_deleted')
+        _record_operational_lifecycle_event(
+            user_id=user_id,
+            org_id=vm.organization_id,
+            event_type='vm_deleted',
+            resource_type='vm',
+            resource_id=vm.id,
+            details={
+                'instance_id': vm.instance_id,
+                'name': vm.name,
+                'final_cost': round(final_cost, 4),
+                'status': 'terminated',
+            },
+        )
+
+        # ── Update resource-count metric ────────────────────────────────────
+        remaining = VirtualMachine.query.filter_by(
+            organization_id=vm.organization_id, status=ResourceStatus.RUNNING
+        ).count()
+        logger.info(
+            "[delete_resource] VM DELETED vm_id=%s org=%d final_cost=%.4f remaining_running=%d",
+            vm.instance_id, vm.organization_id, final_cost, remaining,
+        )
+        socketio.emit(
+            'vm_deleted',
+            {
+                'id': vm.id,
+                'instance_id': vm.instance_id,
+                'org_id': vm.organization_id,
+                'organization_id': vm.organization_id,
+            },
+            room=f'org_{vm.organization_id}',
+            namespace='/metrics',
+        )
+        _emit_resource_update(vm.organization_id)
         return _success(_vm_to_envelope(vm))
 
     database = Database.query.filter(
         Database.id == resource_id,
+        Database.organization_id == org_id,
         Database.status != ResourceStatus.TERMINATED,
     ).first()
     if database:
@@ -948,6 +1091,32 @@ def delete_resource(resource_id):
             return _error('Permission denied', status_code=403)
         database.status = ResourceStatus.TERMINATED
         db.session.commit()
+        _award_xp_for_action(user_id, database.organization_id, 'db_deleted')
+        _record_operational_lifecycle_event(
+            user_id=user_id,
+            org_id=database.organization_id,
+            event_type='db_deleted',
+            resource_type='database',
+            resource_id=database.id,
+            details={
+                'instance_id': database.instance_id,
+                'name': database.name,
+                'engine': database.engine,
+                'status': 'terminated',
+            },
+        )
+        socketio.emit(
+            'vm_deleted',
+            {
+                'id': database.id,
+                'instance_id': database.instance_id,
+                'org_id': database.organization_id,
+                'organization_id': database.organization_id,
+            },
+            room=f'org_{database.organization_id}',
+            namespace='/metrics',
+        )
+        _emit_resource_update(database.organization_id)
         return _success(_db_to_envelope(database))
 
     return _error('Resource not found.', status_code=404, code='not_found')
@@ -959,9 +1128,13 @@ def delete_resource(resource_id):
 def stop_resource(resource_id):
     """Stop a running resource."""
     user_id = get_jwt_identity()
+    org_id = _resolve_request_org_id(user_id)
+    if org_id is None:
+        return _error('organization_id required', status_code=400)
 
     vm = VirtualMachine.query.filter(
         VirtualMachine.id == resource_id,
+        VirtualMachine.organization_id == org_id,
         VirtualMachine.status != ResourceStatus.TERMINATED,
     ).first()
     if vm:
@@ -972,11 +1145,30 @@ def stop_resource(resource_id):
         vm.cpu_utilization = round(vm.cpu_utilization * 0.05, 2)
         vm.memory_utilization = round(vm.memory_utilization * 0.05, 2)
         db.session.commit()
+        _record_operational_lifecycle_event(
+            user_id=user_id,
+            org_id=vm.organization_id,
+            event_type='vm_stopped',
+            resource_type='vm',
+            resource_id=vm.id,
+            details={
+                'instance_id': vm.instance_id,
+                'name': vm.name,
+                'status': 'stopped',
+            },
+        )
+        socketio.emit(
+            'vm_updated',
+            _vm_to_envelope(vm),
+            room=f'org_{vm.organization_id}',
+            namespace='/metrics',
+        )
         _emit_resource_update(vm.organization_id)
         return _success(_vm_to_envelope(vm))
 
     database = Database.query.filter(
         Database.id == resource_id,
+        Database.organization_id == org_id,
         Database.status != ResourceStatus.TERMINATED,
     ).first()
     if database:
@@ -986,6 +1178,25 @@ def stop_resource(resource_id):
         database.cpu_utilization = 0.0
         database.database_connections = 0
         db.session.commit()
+        _record_operational_lifecycle_event(
+            user_id=user_id,
+            org_id=database.organization_id,
+            event_type='db_stopped',
+            resource_type='database',
+            resource_id=database.id,
+            details={
+                'instance_id': database.instance_id,
+                'name': database.name,
+                'engine': database.engine,
+                'status': 'stopped',
+            },
+        )
+        socketio.emit(
+            'vm_updated',
+            _db_to_envelope(database),
+            room=f'org_{database.organization_id}',
+            namespace='/metrics',
+        )
         return _success(_db_to_envelope(database))
 
     return _error('Resource not found.', status_code=404, code='not_found')
@@ -997,9 +1208,13 @@ def stop_resource(resource_id):
 def start_resource(resource_id):
     """Start a stopped resource."""
     user_id = get_jwt_identity()
+    org_id = _resolve_request_org_id(user_id)
+    if org_id is None:
+        return _error('organization_id required', status_code=400)
 
     vm = VirtualMachine.query.filter(
         VirtualMachine.id == resource_id,
+        VirtualMachine.organization_id == org_id,
         VirtualMachine.status == ResourceStatus.STOPPED,
     ).first()
     if vm:
@@ -1011,11 +1226,30 @@ def start_resource(resource_id):
         vm.cpu_utilization = spec.get('baseline_cpu', 0.2) * 100
         vm.memory_utilization = spec.get('baseline_memory', 0.3) * 100
         db.session.commit()
+        _record_operational_lifecycle_event(
+            user_id=user_id,
+            org_id=vm.organization_id,
+            event_type='vm_started',
+            resource_type='vm',
+            resource_id=vm.id,
+            details={
+                'instance_id': vm.instance_id,
+                'name': vm.name,
+                'status': 'running',
+            },
+        )
+        socketio.emit(
+            'vm_updated',
+            _vm_to_envelope(vm),
+            room=f'org_{vm.organization_id}',
+            namespace='/metrics',
+        )
         _emit_resource_update(vm.organization_id)
         return _success(_vm_to_envelope(vm))
 
     database = Database.query.filter(
         Database.id == resource_id,
+        Database.organization_id == org_id,
         Database.status == ResourceStatus.STOPPED,
     ).first()
     if database:
@@ -1024,6 +1258,25 @@ def start_resource(resource_id):
         database.status = ResourceStatus.RUNNING
         database.cpu_utilization = 5.0
         db.session.commit()
+        _record_operational_lifecycle_event(
+            user_id=user_id,
+            org_id=database.organization_id,
+            event_type='db_started',
+            resource_type='database',
+            resource_id=database.id,
+            details={
+                'instance_id': database.instance_id,
+                'name': database.name,
+                'engine': database.engine,
+                'status': 'running',
+            },
+        )
+        socketio.emit(
+            'vm_updated',
+            _db_to_envelope(database),
+            room=f'org_{database.organization_id}',
+            namespace='/metrics',
+        )
         return _success(_db_to_envelope(database))
 
     return _error('Resource not found or not in stopped state.', status_code=404, code='not_found')
@@ -1035,9 +1288,13 @@ def start_resource(resource_id):
 def restart_resource(resource_id):
     """Restart a running resource (brief PENDING → RUNNING transition)."""
     user_id = get_jwt_identity()
+    org_id = _resolve_request_org_id(user_id)
+    if org_id is None:
+        return _error('organization_id required', status_code=400)
 
     vm = VirtualMachine.query.filter(
         VirtualMachine.id == resource_id,
+        VirtualMachine.organization_id == org_id,
         VirtualMachine.status.in_([ResourceStatus.RUNNING, ResourceStatus.STOPPED]),
     ).first()
     if vm:
@@ -1047,11 +1304,30 @@ def restart_resource(resource_id):
         vm.cpu_utilization = 1.0
         vm.memory_utilization = 1.0
         db.session.commit()
+        _record_operational_lifecycle_event(
+            user_id=user_id,
+            org_id=vm.organization_id,
+            event_type='vm_restarted',
+            resource_type='vm',
+            resource_id=vm.id,
+            details={
+                'instance_id': vm.instance_id,
+                'name': vm.name,
+                'status': 'pending',
+            },
+        )
+        socketio.emit(
+            'vm_updated',
+            _vm_to_envelope(vm),
+            room=f'org_{vm.organization_id}',
+            namespace='/metrics',
+        )
         socketio.start_background_task(_complete_vm_creation, vm.id, current_app._get_current_object())
         return _success(_vm_to_envelope(vm))
 
     database = Database.query.filter(
         Database.id == resource_id,
+        Database.organization_id == org_id,
         Database.status.in_([ResourceStatus.RUNNING, ResourceStatus.STOPPED]),
     ).first()
     if database:
@@ -1060,6 +1336,25 @@ def restart_resource(resource_id):
         database.status = ResourceStatus.PENDING
         database.cpu_utilization = 0.0
         db.session.commit()
+        _record_operational_lifecycle_event(
+            user_id=user_id,
+            org_id=database.organization_id,
+            event_type='db_restarted',
+            resource_type='database',
+            resource_id=database.id,
+            details={
+                'instance_id': database.instance_id,
+                'name': database.name,
+                'engine': database.engine,
+                'status': 'pending',
+            },
+        )
+        socketio.emit(
+            'vm_updated',
+            _db_to_envelope(database),
+            room=f'org_{database.organization_id}',
+            namespace='/metrics',
+        )
         socketio.start_background_task(_complete_db_creation, database.id, current_app._get_current_object())
         return _success(_db_to_envelope(database))
 
@@ -1077,50 +1372,27 @@ def create_vm():
     data = request.get_json() or {}
     org_id = _resolve_org_id_for_user(user_id, data.get('organization_id', data.get('org_id')))
     if org_id is None:
-        org_id = 1
+        return _error('organization_id required', status_code=400)
     if not check_org_access(user_id, org_id, 'member'):
         return _error('Permission denied', status_code=403)
 
-    instance_type = data.get('instance_type', 't2.micro')
-    spec = INSTANCE_TYPES.get(instance_type, INSTANCE_TYPES['t2.micro'])
-    name = (data.get('name') or '').strip() or f"VM-{generate_instance_id('i')[:8]}"
-    _ensure_default_security_groups(org_id)
-
-    active_vms = VirtualMachine.query.filter(
-        VirtualMachine.organization_id == org_id,
-        VirtualMachine.status != ResourceStatus.TERMINATED,
-    ).count()
-    active_dbs = Database.query.filter(
-        Database.organization_id == org_id,
-        Database.status != ResourceStatus.TERMINATED,
-    ).count()
-    if active_vms + active_dbs >= 5:
-        return _error('Quota exceeded: maximum 5 resources per organization', status_code=400)
-
-    vm = VirtualMachine(
-        organization_id=org_id,
-        name=name,
-        instance_id=generate_instance_id('i'),
-        instance_type=instance_type,
-        status=ResourceStatus.PENDING,
-        vcpu=spec['vcpu'],
-        memory_gb=spec['memory_gb'],
-        storage_gb=data.get('storage_gb', 8),
-        private_ip=_random_private_ip(),
-        cpu_utilization=spec['baseline_cpu'] * 100,
-        memory_utilization=spec['baseline_memory'] * 100,
-        hourly_rate=spec['hourly_rate'],
-        total_runtime_hours=0.0,
-    )
-    db.session.add(vm)
-    db.session.flush()
-    group_ids = _parse_security_group_ids(data)
-    groups, error = _attach_security_groups_to_vm(vm, group_ids)
+    vm, error = _provision_vm_record(org_id, data)
     if error:
-        db.session.rollback()
-        return _error(error, status_code=400)
-    db.session.commit()
-    socketio.start_background_task(_complete_vm_creation, vm.id, current_app._get_current_object())
+        return error
+    _award_xp_for_action(user_id, org_id, 'vm_created')
+    _record_operational_lifecycle_event(
+        user_id=user_id,
+        org_id=org_id,
+        event_type='vm_created',
+        resource_type='vm',
+        resource_id=vm.id,
+        details={
+            'instance_type': vm.instance_type,
+            'name': vm.name,
+            'hourly_rate': float(vm.hourly_rate or 0),
+        },
+    )
+    _emit_resource_update(org_id)
     return _success(_vm_to_envelope(vm), status_code=201)
 
 
@@ -1130,7 +1402,7 @@ def create_vm():
 def list_vms():
     """List virtual machines."""
     user_id = get_jwt_identity()
-    org_id = request.args.get('organization_id', type=int)
+    org_id = request.args.get('org_id', type=int) or request.args.get('organization_id', type=int)
     if org_id is None:
         org_id = _resolve_org_id_for_user(user_id) or 1
     if not check_org_access(user_id, org_id, 'viewer'):
@@ -1230,6 +1502,13 @@ def vm_action(instance_id):
         vm.stopped_at = datetime.utcnow()
         vm.cpu_utilization = round(vm.cpu_utilization * 0.05, 2)
         vm.memory_utilization = round(vm.memory_utilization * 0.05, 2)
+        # Real-time synchronization
+        socketio.emit(
+            'vm_updated',
+            _vm_to_envelope(vm),
+            room=f'org_{vm.organization_id}',
+            namespace='/metrics'
+        )
     elif action == 'start':
         if vm.status == ResourceStatus.STOPPED:
             vm.status = ResourceStatus.RUNNING
@@ -1237,6 +1516,13 @@ def vm_action(instance_id):
             spec = INSTANCE_TYPES.get(vm.instance_type, {})
             vm.cpu_utilization = spec.get('baseline_cpu', 0.2) * 100
             vm.memory_utilization = spec.get('baseline_memory', 0.3) * 100
+            # Real-time synchronization
+            socketio.emit(
+                'vm_updated',
+                _vm_to_envelope(vm),
+                room=f'org_{vm.organization_id}',
+                namespace='/metrics'
+            )
     elif action == 'terminate':
         vm.status = ResourceStatus.TERMINATED
         vm.terminated_at = datetime.utcnow()
@@ -1244,6 +1530,60 @@ def vm_action(instance_id):
         return _error('Invalid action', status_code=400, code='bad_request')
 
     db.session.commit()
+    if action == 'stop':
+        _record_operational_lifecycle_event(
+            user_id=user_id,
+            org_id=vm.organization_id,
+            event_type='vm_stopped',
+            resource_type='vm',
+            resource_id=vm.id,
+            details={'instance_id': vm.instance_id, 'name': vm.name, 'status': 'stopped'},
+        )
+        socketio.emit(
+            'vm_updated',
+            _vm_to_envelope(vm),
+            room=f'org_{vm.organization_id}',
+            namespace='/metrics',
+        )
+        _emit_resource_update(vm.organization_id)
+    elif action == 'start':
+        _record_operational_lifecycle_event(
+            user_id=user_id,
+            org_id=vm.organization_id,
+            event_type='vm_started',
+            resource_type='vm',
+            resource_id=vm.id,
+            details={'instance_id': vm.instance_id, 'name': vm.name, 'status': 'running'},
+        )
+        socketio.emit(
+            'vm_updated',
+            _vm_to_envelope(vm),
+            room=f'org_{vm.organization_id}',
+            namespace='/metrics',
+        )
+        _emit_resource_update(vm.organization_id)
+    elif action == 'terminate':
+        _award_xp_for_action(user_id, vm.organization_id, 'vm_deleted')
+        _record_operational_lifecycle_event(
+            user_id=user_id,
+            org_id=vm.organization_id,
+            event_type='vm_deleted',
+            resource_type='vm',
+            resource_id=vm.id,
+            details={'instance_id': vm.instance_id, 'name': vm.name, 'status': 'terminated'},
+        )
+        socketio.emit(
+            'vm_deleted',
+            {
+                'id': vm.id,
+                'instance_id': vm.instance_id,
+                'org_id': vm.organization_id,
+                'organization_id': vm.organization_id,
+            },
+            room=f'org_{vm.organization_id}',
+            namespace='/metrics'
+        )
+        _emit_resource_update(vm.organization_id)
     return _success(_vm_to_envelope(vm))
 
 
@@ -1392,16 +1732,86 @@ def database_action(instance_id):
         database.status = ResourceStatus.STOPPED
         database.cpu_utilization = 0.0
         database.database_connections = 0
+
+        # Real-time synchronization
+        socketio.emit(
+            'vm_updated',
+            _db_to_envelope(database),
+            room=f'org_{database.organization_id}',
+            namespace='/metrics'
+        )
     elif action == 'start':
         if database.status == ResourceStatus.STOPPED:
             database.status = ResourceStatus.RUNNING
             database.cpu_utilization = 5.0
+
+            # Real-time synchronization
+            socketio.emit(
+                'vm_updated',
+                _db_to_envelope(database),
+                room=f'org_{database.organization_id}',
+                namespace='/metrics'
+            )
     elif action == 'terminate':
         database.status = ResourceStatus.TERMINATED
     else:
         return _error('Invalid action', status_code=400, code='bad_request')
 
     db.session.commit()
+    if action == 'stop':
+        _record_operational_lifecycle_event(
+            user_id=user_id,
+            org_id=database.organization_id,
+            event_type='db_stopped',
+            resource_type='database',
+            resource_id=database.id,
+            details={'instance_id': database.instance_id, 'name': database.name, 'engine': database.engine, 'status': 'stopped'},
+        )
+        socketio.emit(
+            'vm_updated',
+            _db_to_envelope(database),
+            room=f'org_{database.organization_id}',
+            namespace='/metrics'
+        )
+        _emit_resource_update(database.organization_id)
+    elif action == 'start':
+        _record_operational_lifecycle_event(
+            user_id=user_id,
+            org_id=database.organization_id,
+            event_type='db_started',
+            resource_type='database',
+            resource_id=database.id,
+            details={'instance_id': database.instance_id, 'name': database.name, 'engine': database.engine, 'status': 'running'},
+        )
+        socketio.emit(
+            'vm_updated',
+            _db_to_envelope(database),
+            room=f'org_{database.organization_id}',
+            namespace='/metrics'
+        )
+        _emit_resource_update(database.organization_id)
+    elif action == 'terminate':
+        _award_xp_for_action(user_id, database.organization_id, 'db_deleted')
+        _record_operational_lifecycle_event(
+            user_id=user_id,
+            org_id=database.organization_id,
+            event_type='db_deleted',
+            resource_type='database',
+            resource_id=database.id,
+            details={'instance_id': database.instance_id, 'name': database.name, 'engine': database.engine, 'status': 'terminated'},
+        )
+        socketio.emit(
+            'vm_deleted',
+            {
+                'id': database.id,
+                'instance_id': database.instance_id,
+                'org_id': database.organization_id,
+                'organization_id': database.organization_id,
+            },
+            room=f'org_{database.organization_id}',
+            namespace='/metrics'
+        )
+        _emit_resource_update(database.organization_id)
     return _success(_db_to_envelope(database))
 
 
@@ -1413,51 +1823,37 @@ def create_database():
     data = request.get_json() or {}
     org_id = _resolve_org_id_for_user(user_id, data.get('organization_id', data.get('org_id')))
     if org_id is None:
-        org_id = 1
+        return _error('organization_id required', status_code=400)
     if not check_org_access(user_id, org_id, 'member'):
         return _error('Permission denied', status_code=403)
 
-    active_vms = VirtualMachine.query.filter(
-        VirtualMachine.organization_id == org_id,
-        VirtualMachine.status != ResourceStatus.TERMINATED,
-    ).count()
-    active_dbs = Database.query.filter(
-        Database.organization_id == org_id,
-        Database.status != ResourceStatus.TERMINATED,
-    ).count()
-    if active_vms + active_dbs >= 5:
-        return _error('Quota exceeded: maximum 5 resources per organization', status_code=400)
-
-    engine = data.get('engine', 'PostgreSQL')
-    name = (data.get('name') or '').strip() or f"DB-{generate_instance_id('db')[:8]}"
-    hourly_rate = DB_ENGINE_RATES.get(engine, 0.025)
-
-    database = Database(
-        organization_id=org_id,
-        name=name,
-        instance_id=generate_instance_id('db'),
-        engine=engine,
-        engine_version='14.0',
-        instance_class=data.get('instance_class', 'db.t2.micro'),
-        status=ResourceStatus.PENDING,
-        allocated_storage_gb=data.get('storage_gb', 20),
-        cpu_utilization=5.0,
-        database_connections=0,
-        hourly_rate=hourly_rate,
-        total_runtime_hours=0.0,
+    database, error = _provision_database_record(org_id, data)
+    if error:
+        return error
+    _award_xp_for_action(user_id, org_id, 'db_created')
+    _record_operational_lifecycle_event(
+        user_id=user_id,
+        org_id=org_id,
+        event_type='db_created',
+        resource_type='database',
+        resource_id=database.id,
+        details={
+            'engine': database.engine,
+            'name': database.name,
+            'hourly_rate': float(database.hourly_rate or 0),
+        },
     )
-    db.session.add(database)
-    db.session.commit()
-    socketio.start_background_task(_complete_db_creation, database.id, current_app._get_current_object())
+    _emit_resource_update(org_id)
     return _success(_db_to_envelope(database), status_code=201)
 
 
 @resource_bp.route('/db', methods=['GET'])
+@resource_bp.route('/dbs', methods=['GET'])
 @jwt_required()
 def list_databases():
     """List databases."""
     user_id = get_jwt_identity()
-    org_id = request.args.get('organization_id', type=int)
+    org_id = request.args.get('org_id', type=int) or request.args.get('organization_id', type=int)
     if org_id is None:
         org_id = _resolve_org_id_for_user(user_id) or 1
     if not check_org_access(user_id, org_id, 'viewer'):
@@ -1532,19 +1928,3 @@ def get_resource_metrics():
         'vms': [_vm_to_envelope(vm) for vm in vms],
         'databases': [_db_to_envelope(d) for d in databases],
     })
-
-
-# ── DEBUG ONLY — remove before production ──────────────────────────────────
-@resource_bp.route('/debug/simulator-state', methods=['GET'])
-def debug_simulator_state():
-    """No-auth debug endpoint: confirms ResourceSimulator singleton identity."""
-    simulator = getattr(current_app, 'simulator', None)
-    vm_count = VirtualMachine.query.filter(
-        VirtualMachine.status != ResourceStatus.TERMINATED
-    ).count() if simulator else 0
-    return jsonify({
-        'simulator_id': id(simulator) if simulator else None,
-        'vm_count': vm_count,
-        'is_singleton': simulator is not None,
-    })
-# ── END DEBUG ───────────────────────────────────────────────────────────────

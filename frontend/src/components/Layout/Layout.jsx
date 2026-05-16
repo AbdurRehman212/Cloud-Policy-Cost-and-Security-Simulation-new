@@ -1,13 +1,18 @@
 import React, { useEffect } from "react";
 import { Outlet } from "react-router-dom";
 import { useLocation } from "react-router-dom";
-import { useSelector } from "react-redux";
+import { useDispatch, useSelector } from "react-redux";
+import { fetchProfile } from "../../store/slices/authSlice";
+import { fetchOrganizations } from "../../store/slices/organizationSlice";
+import { fetchVMs } from "../../store/slices/resourceSlice";
 import Sidebar from "./Sidebar";
 import Header from "./Header";
 import AIChatbox from "../Assistant/AIChatbox";
 
 const Layout = () => {
+  const dispatch = useDispatch();
   const location = useLocation();
+  const { isAuthenticated } = useSelector((state) => state.auth);
   const { organizations, currentOrganization } = useSelector(
     (state) => state.organization,
   );
@@ -19,6 +24,18 @@ const Layout = () => {
     null;
 
   const isViewer = currentRole === "viewer";
+
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    dispatch(fetchProfile());
+    dispatch(fetchOrganizations());
+  }, [dispatch, isAuthenticated]);
+
+  useEffect(() => {
+    if (currentOrganization?.id) {
+      dispatch(fetchVMs(currentOrganization.id));
+    }
+  }, [dispatch, currentOrganization?.id]);
 
   useEffect(() => {
     const pathname = location.pathname || "/";

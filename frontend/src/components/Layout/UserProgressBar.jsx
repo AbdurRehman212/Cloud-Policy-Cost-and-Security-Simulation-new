@@ -1,9 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { useSelector } from "react-redux";
 import { TrophyIcon } from "@heroicons/react/24/outline";
-import axios from "axios";
-
-const API_URL = process.env.REACT_APP_API_URL || "http://localhost:5000/api";
+import apiClient from "../../services/api";
 
 const UserProgressBar = () => {
   const { token } = useSelector((state) => state.auth);
@@ -20,8 +18,7 @@ const UserProgressBar = () => {
 
     const loadProgress = async () => {
       try {
-        const response = await axios.get(`${API_URL}/progress`, {
-          headers: { Authorization: `Bearer ${token}` },
+        const response = await apiClient.get("/progress", {
           params: { organization_id: currentOrganization.id },
         });
         setProgress(response?.data?.data || null);

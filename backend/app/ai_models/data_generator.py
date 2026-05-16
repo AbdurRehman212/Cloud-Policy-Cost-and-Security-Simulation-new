@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import logging
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Iterable
 
@@ -10,6 +11,8 @@ import numpy as np
 import pandas as pd
 
 from app.data_sources.real_datasets import dataset_catalog
+
+logger = logging.getLogger(__name__)
 
 
 def _safe_float(value, default):
@@ -44,12 +47,27 @@ def _pick_numeric_std(frame: pd.DataFrame, candidates: Iterable[str], default: f
 class SyntheticDataGenerator:
     """Generate realistic metrics for the digital twin simulator."""
 
+    seed: int = 1337
+    rng: np.random.Generator = field(init=False, repr=False)
+
     def __post_init__(self):
+        self.rng = np.random.default_rng(self.seed)
         self.finops_frame = dataset_catalog.load_finops_frame()
         self.security_frame = dataset_catalog.load_security_frame()
         self.core_frame = dataset_catalog.load_simulator_core_frame()
         self.governance_frame = dataset_catalog.load_governance_frame()
         self.baseline = self._build_baseline()
+        source_desc = (
+            f'finops frame ({len(self.finops_frame)} rows)'
+            if not self.finops_frame.empty
+            else f'core frame ({len(self.core_frame)} rows)'
+            if not self.core_frame.empty
+            else 'hardcoded defaults'
+        )
+        logger.info(
+            '[data_generator] Baseline built from %s: cpu_mean=%.2f%%, memory_mean=%.2f%%',
+            source_desc, self.baseline['cpu_mean'], self.baseline['memory_mean'],
+        )
 
     def _build_baseline(self):
         source = self.finops_frame if not self.finops_frame.empty else self.core_frame
@@ -109,9 +127,9 @@ class SyntheticDataGenerator:
         moment = moment or datetime.utcnow()
         instance_factor = self._instance_factor(vm.instance_type, vm.vcpu, vm.memory_gb)
         business_factor = self._business_hour_factor(moment)
-        cpu_noise = np.random.normal(0, self.baseline['cpu_std'] * 0.35)
-        memory_noise = np.random.normal(0, self.baseline['memory_std'] * 0.22)
-        spike = np.random.exponential(8.0) if np.random.random() < 0.05 else 0.0
+        cpu_noise = self.rng.normal(0, self.baseline['cpu_std'] * 0.35)
+        memory_noise = self.rng.normal(0, self.baseline['memory_std'] * 0.22)
+        spike = self.rng.exponential(8.0) if self.rng.random() < 0.05 else 0.0
 
         cpu_util = self._bounded(
             self.baseline['cpu_mean'] * instance_factor * business_factor + cpu_noise + spike,
@@ -121,10 +139,10 @@ class SyntheticDataGenerator:
             + cpu_util * 0.38
             + memory_noise,
         )
-        disk_read = max(0.0, np.random.normal(self.baseline['disk_read_mean'], self.baseline['disk_read_mean'] * 0.22) + cpu_util * 1.4)
-        disk_write = max(0.0, np.random.normal(self.baseline['disk_write_mean'], self.baseline['disk_write_mean'] * 0.2) + cpu_util * 0.9)
-        network_in = max(0.0, np.random.normal(self.baseline['network_mean'], self.baseline['network_mean'] * 0.18) + cpu_util * 1.25)
-        network_out = max(0.0, network_in * np.random.uniform(0.55, 1.6))
+        disk_read = max(0.0, self.rng.normal(self.baseline['disk_read_mean'], self.baseline['disk_read_mean'] * 0.22) + cpu_util * 1.4)
+        disk_write = max(0.0, self.rng.normal(self.baseline['disk_write_mean'], self.baseline['disk_write_mean'] * 0.2) + cpu_util * 0.9)
+        network_in = max(0.0, self.rng.normal(self.baseline['network_mean'], self.baseline['network_mean'] * 0.18) + cpu_util * 1.25)
+        network_out = max(0.0, network_in * self.rng.uniform(0.55, 1.6))
 
         return {
             'cpu_utilization': round(cpu_util, 2),
@@ -140,16 +158,16 @@ class SyntheticDataGenerator:
         moment = moment or datetime.utcnow()
         instance_factor = self._instance_factor(database.instance_class, 1.0, database.allocated_storage_gb / 20.0)
         business_factor = self._business_hour_factor(moment)
-        cpu_noise = np.random.normal(0, self.baseline['cpu_std'] * 0.2)
-        conn_noise = np.random.poisson(2)
+        cpu_noise = self.rng.normal(0, self.baseline['cpu_std'] * 0.2)
+        conn_noise = self.rng.poisson(2)
 
         cpu_util = self._bounded(
             self.baseline['cpu_mean'] * 0.75 * instance_factor * business_factor + cpu_noise + conn_noise,
         )
-        db_connections = max(0, int(np.random.normal(self.baseline['database_connections_mean'], 4) + cpu_util * 0.22))
-        read_iops = max(0.0, np.random.normal(420, 90) + db_connections * 10 + cpu_util * 2.2)
-        write_iops = max(0.0, np.random.normal(180, 45) + db_connections * 6 + cpu_util * 1.4)
-        free_storage = max(0.0, (database.free_storage_space or 20.0) - np.random.uniform(0.02, 0.28) - db_connections * 0.002)
+        db_connections = max(0, int(self.rng.normal(self.baseline['database_connections_mean'], 4) + cpu_util * 0.22))
+        read_iops = max(0.0, self.rng.normal(420, 90) + db_connections * 10 + cpu_util * 2.2)
+        write_iops = max(0.0, self.rng.normal(180, 45) + db_connections * 6 + cpu_util * 1.4)
+        free_storage = max(0.0, (database.free_storage_space or 20.0) - self.rng.uniform(0.02, 0.28) - db_connections * 0.002)
 
         return {
             'cpu_utilization': round(cpu_util, 2),

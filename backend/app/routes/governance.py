@@ -1,180 +1,226 @@
-from flask import Blueprint, request, jsonify
-from flask_jwt_extended import jwt_required, get_jwt_identity
-from app import db
-from app.models.governance import Policy, ComplianceCheck, AuditLog, PolicyStatus
-from app.models.organization import OrganizationMember
-from datetime import datetime
+from __future__ import annotations
 
-try:
-    from app.ai_models.policy_engine import policy_engine
-except ImportError:
-    policy_engine = None
+from flask import Blueprint, jsonify, request
+from flask_jwt_extended import get_jwt_identity, jwt_required
+
+from app import db
+from app.models.governance import AuditLog, ComplianceCheck, Policy, PolicyStatus
+from app.models.organization import OrganizationMember
+from app.services.governance_engine import governance_engine
 
 governance_bp = Blueprint('governance', __name__)
 
 
-def fallback_compile_policy(policy_rule):
-    """Rules-only fallback used if the policy compiler cannot be imported."""
-    rule_text = (policy_rule or '').strip()
-    if not rule_text:
-        return {'success': False, 'error': 'Policy rule is required'}
-    return {
-        'success': True,
-        'confidence': 1.0,
-        'parsed_rule': {
-            'expression': rule_text,
-            'fields': {
-                'type': 'custom',
-                'severity': 'medium',
-                'resource_type': None,
-                'requires_encryption': False,
-                'requires_private_access': False,
-                'requires_public_block': False,
-                'required_tags': [],
-                'max_cpu': None,
-                'max_memory': None,
-                'max_network': None,
-            },
-        },
-    }
+def _resolve_org_id():
+    return request.args.get('organization_id', type=int) or request.args.get('org_id', type=int)
 
 
-def fallback_evaluate_resource(rule, resource):
-    """Default compliant evaluation when rules cannot be compiled."""
-    return {'compliant': True, 'violations': [], 'rule': rule, 'resource': resource}
+def _require_org_member(user_id: int, org_id: int):
+    if org_id is None:
+        return None
+    return OrganizationMember.query.filter_by(organization_id=org_id, user_id=user_id).first()
+
+
+def _error(message: str, status_code: int = 400):
+    return jsonify({'status': 'error', 'error': {'message': message}}), status_code
+
+
+def _success(data: dict, status_code: int = 200):
+    return jsonify({'status': 'success', 'data': data}), status_code
+
+
 @governance_bp.route('/policies', methods=['POST'])
 @jwt_required()
 def create_policy():
-    """Create a rules-based policy."""
     user_id = get_jwt_identity()
-    data = request.get_json()
-    org_id = data.get('organization_id')
-    member = OrganizationMember.query.filter_by(organization_id=org_id, user_id=user_id).first()
+    data = request.get_json() or {}
+    org_id = data.get('organization_id') or data.get('org_id')
+    member = _require_org_member(user_id, org_id)
     if not member or member.role not in ['admin', 'owner']:
-        return jsonify({'error': 'Insufficient permissions'}), 403
-    # Parse explicit rule syntax
-    policy_rule = data.get('policy_rule') or data.get('natural_language_rule')
-    parsed = policy_engine.parse_policy(policy_rule) if policy_engine else fallback_compile_policy(policy_rule)
+        return _error('Insufficient permissions', 403)
+
+    name = (data.get('name') or '').strip()
+    policy_rule = (data.get('policy_rule') or data.get('natural_language_rule') or '').strip()
+    if not name:
+        return _error('Policy name is required', 400)
+    if not policy_rule:
+        return _error('Policy rule is required', 400)
+
+    parsed = governance_engine.compile_policy_text(policy_rule)
     if not parsed['success']:
-        return jsonify({'error': parsed['error']}), 400
+        return _error(parsed['error'], 400)
+
+    status_value = data.get('status', PolicyStatus.ACTIVE.value)
+    if status_value not in {status.value for status in PolicyStatus}:
+        return _error('Invalid policy status', 400)
+
     parsed_rule = parsed['parsed_rule']
     rule_fields = parsed_rule.get('fields', parsed_rule)
     policy = Policy(
         organization_id=org_id,
-        name=data.get('name'),
+        name=name,
         description=data.get('description'),
         natural_language_rule=policy_rule,
         compiled_rule=parsed_rule,
         policy_type=rule_fields.get('type', 'custom'),
-        auto_remediate=data.get('auto_remediate', False),
+        auto_remediate=bool(data.get('auto_remediate', False)),
         severity=rule_fields.get('severity', 'medium'),
-        status=PolicyStatus.ACTIVE,
-        created_by=user_id
+        status=PolicyStatus(status_value),
+        created_by=user_id,
     )
     db.session.add(policy)
+    db.session.flush()
+    governance_engine._record_audit_event(
+        org_id=org_id,
+        user_id=user_id,
+        action='policy_created',
+        resource_type='policy',
+        resource_id=str(policy.id),
+        new_values=policy.to_dict(),
+    )
     db.session.commit()
-    return jsonify({
-        'message': 'Policy created',
-        'policy': policy.to_dict(),
-        'parsed_confidence': parsed['confidence']
-    }), 201
+
+    return _success(
+        {
+            'message': 'Policy created',
+            'policy': policy.to_dict(),
+            'parsed_confidence': parsed['confidence'],
+        },
+        201,
+    )
+
+
 @governance_bp.route('/policies', methods=['GET'])
 @jwt_required()
 def list_policies():
-    """List policies."""
     user_id = get_jwt_identity()
-    org_id = request.args.get('organization_id', type=int)
-    member = OrganizationMember.query.filter_by(organization_id=org_id, user_id=user_id).first()
+    org_id = _resolve_org_id()
+    member = _require_org_member(user_id, org_id)
     if not member:
-        return jsonify({'error': 'Access denied'}), 403
-    policies = Policy.query.filter_by(organization_id=org_id).all()
-    return jsonify({
-        'policies': [p.to_dict() for p in policies]
-    }), 200
+        return _error('Access denied', 403)
+
+    policies = (
+        Policy.query
+        .filter_by(organization_id=org_id)
+        .order_by(Policy.created_at.desc(), Policy.id.desc())
+        .all()
+    )
+    return _success({'policies': [policy.to_dict() for policy in policies]})
+
+
+@governance_bp.route('/policies/<int:policy_id>', methods=['PUT'])
+@jwt_required()
+def update_policy(policy_id):
+    user_id = get_jwt_identity()
+    policy = Policy.query.get_or_404(policy_id)
+    member = _require_org_member(user_id, policy.organization_id)
+    if not member or member.role not in ['admin', 'owner']:
+        return _error('Insufficient permissions', 403)
+
+    data = request.get_json() or {}
+    old_values = policy.to_dict()
+
+    policy.name = (data.get('name') or policy.name).strip()
+    policy.description = data.get('description', policy.description)
+    policy.auto_remediate = bool(data.get('auto_remediate', policy.auto_remediate))
+
+    if data.get('policy_rule') or data.get('natural_language_rule'):
+        policy_rule = (data.get('policy_rule') or data.get('natural_language_rule')).strip()
+        parsed = governance_engine.compile_policy_text(policy_rule)
+        if not parsed['success']:
+            return _error(parsed['error'], 400)
+        policy.natural_language_rule = policy_rule
+        parsed_rule = parsed['parsed_rule']
+        rule_fields = parsed_rule.get('fields', parsed_rule)
+        policy.compiled_rule = parsed_rule
+        policy.policy_type = rule_fields.get('type', policy.policy_type or 'custom')
+        policy.severity = rule_fields.get('severity', policy.severity or 'medium')
+
+    if data.get('status') in {status.value for status in PolicyStatus}:
+        policy.status = PolicyStatus(data['status'])
+
+    governance_engine._record_audit_event(
+        org_id=policy.organization_id,
+        user_id=user_id,
+        action='policy_updated',
+        resource_type='policy',
+        resource_id=str(policy.id),
+        old_values=old_values,
+        new_values=policy.to_dict(),
+    )
+    db.session.commit()
+
+    return _success({'message': 'Policy updated', 'policy': policy.to_dict()})
+
+
+@governance_bp.route('/policies/<int:policy_id>', methods=['DELETE'])
+@jwt_required()
+def delete_policy(policy_id):
+    user_id = get_jwt_identity()
+    policy = Policy.query.get_or_404(policy_id)
+    member = _require_org_member(user_id, policy.organization_id)
+    if not member or member.role not in ['admin', 'owner']:
+        return _error('Insufficient permissions', 403)
+
+    snapshot = policy.to_dict()
+    org_id = policy.organization_id
+    ComplianceCheck.query.filter_by(policy_id=policy.id).delete(synchronize_session=False)
+    db.session.delete(policy)
+    governance_engine._record_audit_event(
+        org_id=org_id,
+        user_id=user_id,
+        action='policy_deleted',
+        resource_type='policy',
+        resource_id=str(policy_id),
+        old_values=snapshot,
+        new_values={'deleted': True},
+    )
+    db.session.commit()
+    return _success({'message': 'Policy deleted'})
+
+
 @governance_bp.route('/compliance/check', methods=['POST'])
 @jwt_required()
 def check_compliance():
-    """Run compliance check against resources."""
     user_id = get_jwt_identity()
-    data = request.get_json()
-    org_id = data.get('organization_id')
-    member = OrganizationMember.query.filter_by(organization_id=org_id, user_id=user_id).first()
+    data = request.get_json() or {}
+    org_id = data.get('organization_id') or data.get('org_id')
+    member = _require_org_member(user_id, org_id)
     if not member:
-        return jsonify({'error': 'Access denied'}), 403
-    # Get active policies
-    policies = Policy.query.filter_by(organization_id=org_id, status=PolicyStatus.ACTIVE).all()
-    # Get resources
-    from app.models.resources import VirtualMachine, Database
-    vms = VirtualMachine.query.filter_by(organization_id=org_id).all()
-    dbs = Database.query.filter_by(organization_id=org_id).all()
-    results = []
-    for policy in policies:
-        compiled = policy.compiled_rule or {}
-        rule = compiled.get('fields', compiled)
-        # Check VMs
-        for vm in vms:
-            if rule.get('resource_type') in [None, 'vm']:
-                result = policy_engine.evaluate_resource(rule, vm.to_dict()) if policy_engine else fallback_evaluate_resource(rule, vm.to_dict())
-                if not result['compliant']:
-                    check = ComplianceCheck(
-                        policy_id=policy.id,
-                        resource_id=vm.instance_id,
-                        resource_type='vm',
-                        is_compliant=False,
-                        violation_details=result
-                    )
-                    db.session.add(check)
-                    results.append({
-                        'policy': policy.name,
-                        'resource': vm.instance_id,
-                        'compliant': False,
-                        'violations': result['violations']
-                    })
-                    # Auto-remediate if enabled
-                    if policy.auto_remediate:
-                        # Apply remediation
-                        check.remediation_applied = True
-                        check.remediation_details = {'action': 'auto_fixed'}
-        # Check Databases
-        for database in dbs:
-            if rule.get('resource_type') in [None, 'database']:
-                result = policy_engine.evaluate_resource(rule, database.to_dict()) if policy_engine else fallback_evaluate_resource(rule, database.to_dict())
-                if not result['compliant']:
-                    check = ComplianceCheck(
-                        policy_id=policy.id,
-                        resource_id=database.instance_id,
-                        resource_type='database',
-                        is_compliant=False,
-                        violation_details=result
-                    )
-                    db.session.add(check)
-                    results.append({
-                        'policy': policy.name,
-                        'resource': database.instance_id,
-                        'compliant': False,
-                        'violations': result['violations']
-                    })
-    db.session.commit()
-    return jsonify({
-        'checked_at': datetime.utcnow().isoformat(),
-        'policies_checked': len(policies),
-        'violations_found': len(results),
-        'results': results
-    }), 200
+        return _error('Access denied', 403)
+
+    result = governance_engine.evaluate_org_policies(org_id, actor_user_id=user_id)
+    return _success(result)
+
+
+@governance_bp.route('/compliance/checks', methods=['GET'])
+@jwt_required()
+def get_compliance_checks():
+    user_id = get_jwt_identity()
+    org_id = _resolve_org_id()
+    member = _require_org_member(user_id, org_id)
+    if not member:
+        return _error('Access denied', 403)
+
+    limit = request.args.get('limit', default=100, type=int)
+    checks = governance_engine.get_recent_checks(org_id, limit=max(1, min(limit, 500)))
+    return _success({'checks': checks})
+
+
 @governance_bp.route('/audit-logs', methods=['GET'])
 @jwt_required()
 def get_audit_logs():
-    """Get audit trail."""
     user_id = get_jwt_identity()
-    org_id = request.args.get('organization_id', type=int)
-    member = OrganizationMember.query.filter_by(organization_id=org_id, user_id=user_id).first()
+    org_id = _resolve_org_id()
+    member = _require_org_member(user_id, org_id)
     if not member:
-        return jsonify({'error': 'Access denied'}), 403
-    logs = AuditLog.query.filter_by(organization_id=org_id)\
-        .order_by(AuditLog.timestamp.desc())\
-        .limit(1000)\
+        return _error('Access denied', 403)
+
+    logs = (
+        AuditLog.query
+        .filter_by(organization_id=org_id)
+        .order_by(AuditLog.timestamp.desc(), AuditLog.id.desc())
+        .limit(1000)
         .all()
-    return jsonify({
-        'logs': [log.to_dict() for log in logs],
-        'total': len(logs)
-    }), 200
+    )
+    return _success({'logs': [log.to_dict() for log in logs], 'total': len(logs)})

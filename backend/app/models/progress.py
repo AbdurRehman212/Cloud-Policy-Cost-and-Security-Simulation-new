@@ -38,14 +38,25 @@ class UserProgress(db.Model):
     def level_title(self):
         """Return the title for the current level."""
         level_titles = {
-            1: "Cloud Curious",
-            2: "Cloud Apprentice",
-            3: "Cloud Practitioner",
-            4: "Cloud Engineer",
-            5: "Cloud Architect",
-            6: "Cloud Expert",
+            1: "Beginner",
+            2: "Foundation",
+            3: "Intermediate",
+            4: "Advanced",
+            5: "Architect",
+            6: "Expert",
         }
-        return level_titles.get(self.level, "Cloud Expert")
+        return level_titles.get(self.level, "Expert")
+
+    @property
+    def learning_stage(self):
+        """Return a compact stage label for the learning journey."""
+        if self.level <= 1:
+            return "beginner"
+        if self.level <= 2:
+            return "foundation"
+        if self.level <= 3:
+            return "intermediate"
+        return "advanced"
     
     @property
     def xp_to_next_level(self):
@@ -113,6 +124,7 @@ class UserProgress(db.Model):
             'total_points': self.total_points,
             'level': self.level,
             'level_title': self.level_title,
+            'learning_stage': self.learning_stage,
             'xp_to_next_level': self.xp_to_next_level,
             'xp_for_current_level': self.xp_for_current_level,
             'badges': self.badges or [],

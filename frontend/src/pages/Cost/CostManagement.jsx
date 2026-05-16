@@ -1,12 +1,12 @@
 import React, { useEffect, useState } from "react";
 import { useDispatch, useSelector } from "react-redux";
-import axios from "axios";
 import {
   fetchCurrentCosts,
   fetchForecast,
   fetchOptimization,
 } from "../../store/slices/costSlice";
 import LearningPanel from "../../components/Learning/LearningPanel";
+import apiClient from "../../services/api";
 import {
   BarChart,
   Bar,
@@ -21,14 +21,18 @@ import {
 } from "recharts";
 import toast from "react-hot-toast";
 const COLORS = ["#3b82f6", "#10b981", "#f59e0b", "#ef4444"];
-const API_URL = process.env.REACT_APP_API_URL || "http://localhost:5000/api";
+
+const formatMoney = (value) => `$${Number(value || 0).toFixed(2)}`;
+
 const CostManagement = () => {
   const dispatch = useDispatch();
   const { currentOrganization } = useSelector((state) => state.organization);
-  const { token } = useSelector((state) => state.auth);
-  const { currentCosts, forecast, recommendations } = useSelector(
+  const { currentCosts, forecast, recommendations, loading } = useSelector(
     (state) => state.cost,
   );
+  const canManageBudgets =
+    currentOrganization?.my_role === "admin" ||
+    currentOrganization?.my_role === "owner";
   const [showBudgetModal, setShowBudgetModal] = useState(false);
   const [learningActionKey, setLearningActionKey] = useState(null);
   const [budgetForm, setBudgetForm] = useState({
@@ -53,8 +57,8 @@ const CostManagement = () => {
     if (!currentOrganization?.id) return;
 
     try {
-      await axios.post(
-        `${API_URL}/cost/budgets`,
+      await apiClient.post(
+        "/cost/budgets",
         {
           organization_id: currentOrganization.id,
           ...budgetForm,
@@ -63,7 +67,6 @@ const CostManagement = () => {
           alert_threshold_2: Number(budgetForm.alert_threshold_2),
           alert_threshold_3: Number(budgetForm.alert_threshold_3),
         },
-        { headers: { Authorization: `Bearer ${token}` } },
       );
       toast.success("Budget created successfully");
       setLearningActionKey("cost_budget_created");
@@ -72,6 +75,7 @@ const CostManagement = () => {
         ...previous,
         amount: "",
       }));
+      dispatch(fetchCurrentCosts(currentOrganization.id));
     } catch (error) {
       toast.error(error.response?.data?.error || "Failed to create budget");
     }
@@ -84,19 +88,37 @@ const CostManagement = () => {
         }),
       )
     : [];
+  const dailyTrendData = currentCosts?.current_month?.by_day
+    ? Object.entries(currentCosts.current_month.by_day).map(([date, cost]) => ({
+        date: date.slice(5),
+        cost,
+      }))
+    : [];
+  const costSummary = currentCosts?.costs || null;
+  const activeBudgets = costSummary?.budgets || [];
+  const primaryBudget = activeBudgets[0] || null;
+  const trackedDays = dailyTrendData.length;
+  const hasCostData = Boolean(serviceData.length || dailyTrendData.length);
+
   return (
     <div className="space-y-6">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <h1 className="text-2xl font-bold text-gray-900 dark:text-white">
           Cost Management
         </h1>
-        <button
-          type="button"
-          onClick={() => setShowBudgetModal(true)}
-          className="btn-primary"
-        >
-          Create Budget
-        </button>
+        {canManageBudgets ? (
+          <button
+            type="button"
+            onClick={() => setShowBudgetModal(true)}
+            className="btn-primary"
+          >
+            Create Budget
+          </button>
+        ) : (
+          <p className="text-sm text-gray-500 dark:text-gray-400">
+            Only admins and owners can create or change budgets.
+          </p>
+        )}
       </div>
       {learningActionKey && (
         <LearningPanel
@@ -111,23 +133,21 @@ const CostManagement = () => {
             Current Month
           </p>
           <p className="text-2xl font-bold text-gray-900 dark:text-white">
-            ${currentCosts?.current_month?.total?.toFixed(2) || "0.00"}
+            {formatMoney(currentCosts?.current_month?.total)}
           </p>
           <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
-            Projected: $
-            {currentCosts?.current_month?.projected_month_end?.toFixed(2) ||
-              "0.00"}
+            Projected: {formatMoney(currentCosts?.current_month?.projected_month_end)}
           </p>
         </div>
         <div className="card">
           <p className="text-sm font-medium text-gray-600 dark:text-gray-400">
-            Daily Average
+            Tracked Days
           </p>
           <p className="text-2xl font-bold text-gray-900 dark:text-white">
-            $
-            {currentCosts?.current_month?.total
-              ? (currentCosts.current_month.total / 30).toFixed(2)
-              : "0.00"}
+            {trackedDays}
+          </p>
+          <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
+            Days with persisted cost activity this month
           </p>
         </div>
         <div className="card">
@@ -142,10 +162,29 @@ const CostManagement = () => {
           <p className="text-sm font-medium text-gray-600 dark:text-gray-400">
             Budget Status
           </p>
-          <p className="text-2xl font-bold text-success-600">On Track</p>
-          <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
-            67% of budget used
-          </p>
+          {primaryBudget ? (
+            <>
+              <p className="text-2xl font-bold text-gray-900 dark:text-white">
+                {primaryBudget.alert_level === "critical"
+                  ? "Exceeded"
+                  : primaryBudget.alert_level === "warning"
+                    ? "Warning"
+                    : "On Track"}
+              </p>
+              <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
+                {primaryBudget.name}: {Number(primaryBudget.percentage_used || 0).toFixed(1)}% used
+              </p>
+            </>
+          ) : (
+            <>
+              <p className="text-2xl font-bold text-gray-900 dark:text-white">
+                No Budget
+              </p>
+              <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
+                Create a persisted budget to track spend against limits
+              </p>
+            </>
+          )}
         </div>
       </div>
       {showBudgetModal && (
@@ -303,55 +342,60 @@ const CostManagement = () => {
           <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">
             Cost by Service
           </h3>
-          <ResponsiveContainer width="100%" height={300}>
-            <PieChart>
-              <Pie
-                data={serviceData}
-                cx="50%"
-                cy="50%"
-                labelLine={false}
-                label={({ name, percent }) =>
-                  `${name} ${(percent * 100).toFixed(0)}%`
-                }
-                outerRadius={80}
-                fill="#8884d8"
-                dataKey="value"
-              >
-                {serviceData.map((entry, index) => (
-                  <Cell
-                    key={`cell-${index}`}
-                    fill={COLORS[index % COLORS.length]}
-                  />
-                ))}
-              </Pie>
-              <Tooltip />
-            </PieChart>
-          </ResponsiveContainer>
+          {serviceData.length > 0 ? (
+            <ResponsiveContainer width="100%" height={300}>
+              <PieChart>
+                <Pie
+                  data={serviceData}
+                  cx="50%"
+                  cy="50%"
+                  labelLine={false}
+                  label={({ name, percent }) =>
+                    `${name} ${(percent * 100).toFixed(0)}%`
+                  }
+                  outerRadius={80}
+                  fill="#8884d8"
+                  dataKey="value"
+                >
+                  {serviceData.map((entry, index) => (
+                    <Cell
+                      key={`cell-${index}`}
+                      fill={COLORS[index % COLORS.length]}
+                    />
+                  ))}
+                </Pie>
+                <Tooltip />
+              </PieChart>
+            </ResponsiveContainer>
+          ) : (
+            <div className="flex h-[300px] items-center justify-center text-sm text-gray-500 dark:text-gray-400">
+              {loading
+                ? "Loading persisted service cost data..."
+                : "No persisted cost records are available for this organization yet."}
+            </div>
+          )}
         </div>
         <div className="card">
           <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">
             Daily Cost Trend
           </h3>
-          <ResponsiveContainer width="100%" height={300}>
-            <BarChart
-              data={
-                currentCosts?.current_month?.by_day
-                  ? Object.entries(currentCosts.current_month.by_day).map(
-                      ([date, cost]) => ({
-                        date: date.slice(5),
-                        cost,
-                      }),
-                    )
-                  : []
-              }
-            >
-              <CartesianGrid strokeDasharray="3 3" />
-              <XAxis dataKey="date" />
-              <YAxis />
-              <Tooltip />
-              <Bar dataKey="cost" fill="#3b82f6" />
-            </BarChart>
-          </ResponsiveContainer>
+          {dailyTrendData.length > 0 ? (
+            <ResponsiveContainer width="100%" height={300}>
+              <BarChart data={dailyTrendData}>
+                <CartesianGrid strokeDasharray="3 3" />
+                <XAxis dataKey="date" />
+                <YAxis />
+                <Tooltip />
+                <Bar dataKey="cost" fill="#3b82f6" />
+              </BarChart>
+            </ResponsiveContainer>
+          ) : (
+            <div className="flex h-[300px] items-center justify-center text-sm text-gray-500 dark:text-gray-400">
+              {loading
+                ? "Loading persisted daily cost trend..."
+                : "No daily cost trend is available until backend cost records are created."}
+            </div>
+          )}
         </div>
       </div>
       {/* Optimization Recommendations */}
@@ -386,62 +430,13 @@ const CostManagement = () => {
               </div>
             ))
           ) : (
-            <>
-              <div className="flex items-center justify-between p-4 bg-gray-50 dark:bg-gray-700/50 rounded-lg">
-                <div>
-                  <p className="font-medium text-gray-900 dark:text-white">
-                    Right-size underutilized VMs
-                  </p>
-                  <p className="text-sm text-gray-500 dark:text-gray-400">
-                    3 VMs running at &lt; 10% CPU
-                  </p>
-                </div>
-                <div className="text-right">
-                  <p className="text-lg font-bold text-success-600">
-                    Save $450/mo
-                  </p>
-                  <button className="text-sm text-primary-600 hover:text-primary-500">
-                    Apply
-                  </button>
-                </div>
-              </div>
-              <div className="flex items-center justify-between p-4 bg-gray-50 dark:bg-gray-700/50 rounded-lg">
-                <div>
-                  <p className="font-medium text-gray-900 dark:text-white">
-                    Enable Reserved Instances
-                  </p>
-                  <p className="text-sm text-gray-500 dark:text-gray-400">
-                    Commit to 1-year term
-                  </p>
-                </div>
-                <div className="text-right">
-                  <p className="text-lg font-bold text-success-600">
-                    Save $1,200/mo
-                  </p>
-                  <button className="text-sm text-primary-600 hover:text-primary-500">
-                    Apply
-                  </button>
-                </div>
-              </div>
-              <div className="flex items-center justify-between p-4 bg-gray-50 dark:bg-gray-700/50 rounded-lg">
-                <div>
-                  <p className="font-medium text-gray-900 dark:text-white">
-                    Delete unattached storage volumes
-                  </p>
-                  <p className="text-sm text-gray-500 dark:text-gray-400">
-                    5 volumes not in use
-                  </p>
-                </div>
-                <div className="text-right">
-                  <p className="text-lg font-bold text-success-600">
-                    Save $85/mo
-                  </p>
-                  <button className="text-sm text-primary-600 hover:text-primary-500">
-                    Apply
-                  </button>
-                </div>
-              </div>
-            </>
+            <div className="rounded-lg bg-gray-50 p-4 text-sm text-gray-600 dark:bg-gray-700/50 dark:text-gray-300">
+              {loading
+                ? "Loading backend optimization recommendations..."
+                : hasCostData
+                  ? "No backend optimization recommendations are active for the current persisted resource state."
+                  : "Recommendations will appear here after backend cost records and active resources are available."}
+            </div>
           )}
         </div>
       </div>

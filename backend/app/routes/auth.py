@@ -1,12 +1,11 @@
-from flask import Blueprint, request, jsonify
-from flask_jwt_extended import create_access_token, create_refresh_token, jwt_required, get_jwt_identity
+from flask import Blueprint, request, jsonify, current_app
+from flask_jwt_extended import create_access_token, create_refresh_token, jwt_required, get_jwt_identity, get_jwt
 from app import db, mail
-from app.models.user import User, UserProfile, EmailVerification
+from app.models.user import User, UserProfile, EmailVerification, TokenBlacklist
 from app.models.settings import UserSettings
 from app.models.organization import ensure_default_organization_membership
 from flask_mail import Message
 import re
-from datetime import datetime
 auth_bp = Blueprint('auth', __name__)
 
 DEMO_EMAIL_VERIFICATION_BYPASS = True
@@ -18,6 +17,21 @@ def _success(data, status_code=200):
 
 def _error(message, status_code=400):
     return jsonify({'status': 'error', 'error': {'message': message}}), status_code
+
+
+def _frontend_url(path):
+    base_url = current_app.config.get('FRONTEND_BASE_URL') or request.host_url.rstrip('/')
+    return f"{base_url}{path}" if base_url else path
+
+
+def _mail_delivery_configured():
+    return bool(
+        current_app.config.get('MAIL_SERVER')
+        and current_app.config.get('MAIL_PORT')
+        and current_app.config.get('MAIL_DEFAULT_SENDER')
+        and current_app.config.get('MAIL_USERNAME')
+        and current_app.config.get('MAIL_PASSWORD')
+    )
 
 
 def is_valid_email(email):
@@ -100,7 +114,7 @@ def send_verification_email(email, token):
             'Verify Your Cloud Policy, Cost & Security Simulator Account',
             recipients=[email]
         )
-        verify_url = f"http://localhost:3000/verify-email?token={token}"
+        verify_url = _frontend_url(f"/verify-email?token={token}")
         msg.body = f"""
         Welcome to Cloud Policy, Cost & Security Simulator!
         Please verify your email by clicking: {verify_url}
@@ -139,31 +153,48 @@ def login():
         return _error('Invalid credentials', status_code=401)
 
     if DEMO_EMAIL_VERIFICATION_BYPASS and (not user.is_active or not user.email_verified):
-        user.is_active = True
-        user.email_verified = True
+        pass
     elif not user.is_active:
         return _error('Account not activated. Please verify your email.', status_code=403)
 
-    ensure_default_organization_membership(user)
-
-    # Update last login
-    user.last_login = datetime.utcnow()
-    db.session.commit()
     # Create tokens
     access_token = create_access_token(identity=user.id)
     refresh_token = create_refresh_token(identity=user.id)
-
+    
+    active_org_id = user.organizations[0].organization_id if user.organizations else None
+    
     payload = {
         'access_token': access_token,
         'refresh_token': refresh_token,
-        'user': user.to_dict()
+        'user': user.to_dict(),
+        'active_org_id': active_org_id,
     }
     return _success(payload)
+
+@auth_bp.route('/logout', methods=['DELETE'])
+@jwt_required(refresh=True)
+def logout():
+    """Logout - invalidate refresh token."""
+    jti = get_jwt().get('jti')
+    if jti:
+        if not TokenBlacklist.is_blacklisted(jti, 'refresh'):
+            blacklisted = TokenBlacklist(
+                jti=jti,
+                token_type='refresh'
+            )
+            db.session.add(blacklisted)
+            db.session.commit()
+    return _success({'message': 'Logged out successfully'})
+
 @auth_bp.route('/refresh', methods=['POST'])
 @jwt_required(refresh=True)
 def refresh():
     """Refresh access token."""
     user_id = get_jwt_identity()
+    jti = get_jwt().get('jti')
+    # Validate refresh token not blacklisted
+    if jti and TokenBlacklist.is_blacklisted(jti, 'refresh'):
+        return _error('Refresh token has been invalidated', status_code=401)
     access_token = create_access_token(identity=user_id)
     return _success({'access_token': access_token})
 @auth_bp.route('/profile', methods=['GET'])
@@ -197,10 +228,14 @@ def update_profile():
         user.first_name = data['first_name']
     if 'last_name' in data:
         user.last_name = data['last_name']
+    # Create UserProfile first before assigning profile fields
     if not user.profile:
         from app.models.user import UserProfile
         user.profile = UserProfile(user_id=user.id)
         db.session.add(user.profile)
+        db.session.flush()
+    if 'bio' in data:
+        user.profile.bio = data['bio']
     if 'timezone' in data:
         user.profile.timezone = data['timezone']
     if 'phone' in data:
@@ -211,20 +246,21 @@ def update_profile():
         user.profile.job_title = data['job_title']
     db.session.commit()
     return _success({
-        'message': 'Profile updated',
         'user': user.to_dict(),
         'profile': {
             'timezone': user.profile.timezone if user.profile else 'UTC',
             'phone': user.profile.phone if user.profile else None,
+            'bio': user.profile.bio if user.profile else None,
         }
-    })
+    }, status_code=200)
 @auth_bp.route('/forgot-password', methods=['POST'])
 def forgot_password():
     """Request password reset."""
     payload = request.get_json() or {}
     email = payload.get('email')
+    delivery_configured = _mail_delivery_configured()
     user = User.query.filter_by(email=email).first()
-    if user:
+    if user and delivery_configured:
         # Generate reset token
         from app.models.user import EmailVerification
         reset = EmailVerification.create_token(user.id)
@@ -233,13 +269,46 @@ def forgot_password():
         # Send email
         try:
             msg = Message('Password Reset Request', recipients=[email])
-            reset_url = f"http://localhost:3000/reset-password?token={reset.token}"
+            reset_url = _frontend_url(f"/reset-password?token={reset.token}")
             msg.body = f"Reset your password: {reset_url}"
             mail.send(msg)
         except:
             pass
-    # Always return success to prevent email enumeration
-    return _success({'message': 'If email exists, reset instructions sent'})
+    # Always return success to prevent email enumeration.
+    message = (
+        'If that email is registered and password reset email delivery is configured, reset instructions will be sent.'
+        if delivery_configured
+        else 'Password reset email delivery is not configured in this build.'
+    )
+    return _success({
+        'message': message,
+        'delivery_configured': delivery_configured,
+    })
+@auth_bp.route('/reset-password', methods=['POST'])
+def reset_password():
+    """Reset password using a token from the forgot-password flow."""
+    data = request.get_json() or {}
+    token = data.get('token')
+    new_password = data.get('new_password')
+    if not token or not new_password:
+        return _error('Token and new password required', status_code=400)
+    from app.models.user import EmailVerification
+    verification = EmailVerification.query.filter_by(token=token, used=False).first()
+    if not verification:
+        return _error('Invalid or expired reset token', status_code=400)
+    if verification.is_expired():
+        return _error('Reset token has expired. Request a new one.', status_code=400)
+    valid, msg = is_valid_password(new_password)
+    if not valid:
+        return _error(msg, status_code=400)
+    user = User.query.get(verification.user_id)
+    if not user:
+        return _error('User not found', status_code=404)
+    user.set_password(new_password)
+    verification.used = True
+    db.session.commit()
+    return _success({'message': 'Password reset successfully. You can now log in.'})
+
 @auth_bp.route('/change-password', methods=['POST'])
 @jwt_required()
 def change_password():

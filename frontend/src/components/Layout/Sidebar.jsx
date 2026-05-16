@@ -8,19 +8,17 @@ import {
   ShieldCheckIcon,
   CurrencyDollarIcon,
   ClipboardDocumentCheckIcon,
+  DocumentChartBarIcon,
   CreditCardIcon,
   Cog6ToothIcon,
-  PencilSquareIcon,
   UserCircleIcon,
   BuildingOfficeIcon,
-  GlobeAltIcon,
 } from "@heroicons/react/24/outline";
 const Sidebar = () => {
   const { currentOrganization } = useSelector((state) => state.organization);
   const navigation = [
     { name: "Dashboard", href: "/", icon: HomeIcon },
     { name: "🧪 Labs", href: "/scenarios", icon: AcademicCapIcon },
-    { name: "Architecture", href: "/canvas", icon: PencilSquareIcon },
     { name: "Resources", href: "/resources", icon: ServerIcon },
     { name: "Security", href: "/security", icon: ShieldCheckIcon },
     { name: "Cost Management", href: "/cost", icon: CurrencyDollarIcon },
@@ -29,10 +27,10 @@ const Sidebar = () => {
       href: "/governance",
       icon: ClipboardDocumentCheckIcon,
     },
+    { name: "Reports", href: "/reports", icon: DocumentChartBarIcon },
     { name: "Membership", href: "/membership", icon: CreditCardIcon },
-    { name: "Settings", href: "/settings", icon: Cog6ToothIcon },
-    { name: "Network", href: "/network", icon: GlobeAltIcon },
     { name: "Organization", href: "/organization", icon: BuildingOfficeIcon },
+    { name: "Settings", href: "/settings", icon: Cog6ToothIcon },
     { name: "Profile", href: "/profile", icon: UserCircleIcon },
   ];
   return (

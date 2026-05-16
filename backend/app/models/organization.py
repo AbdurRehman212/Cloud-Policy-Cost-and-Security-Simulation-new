@@ -106,10 +106,10 @@ def ensure_default_organization_membership(user):
             existing_membership.role = 'owner'
         return existing_membership.organization, existing_membership, False
 
-    org_name = f"{(user.first_name or 'Demo').strip()} Demo Organization"
+    org_name = f"{(user.first_name or 'User').strip()}'s Cloud Workspace"
     organization = Organization(
         name=org_name,
-        description='Auto-created default organization for demo onboarding.',
+        description='Personal cloud workspace for learning infrastructure management.',
         owner_id=user.id,
         billing_email=user.email,
         max_resources=100,
@@ -126,5 +126,31 @@ def ensure_default_organization_membership(user):
     db.session.add(membership)
     from app.routes.resources import _ensure_default_security_groups
     _ensure_default_security_groups(organization.id)
+
+    from app.models.resources import VPC, Subnet
+    vpc = VPC(
+        name='default-vpc',
+        organization_id=organization.id,
+        cidr_block='10.0.0.0/16',
+        is_default=True,
+    )
+    db.session.add(vpc)
+    db.session.flush()
+    db.session.add(Subnet(
+        name='public-subnet-1',
+        vpc_id=vpc.id,
+        organization_id=organization.id,
+        cidr_block='10.0.1.0/24',
+        subnet_type='public',
+        availability_zone='us-east-1a',
+    ))
+    db.session.add(Subnet(
+        name='private-subnet-1',
+        vpc_id=vpc.id,
+        organization_id=organization.id,
+        cidr_block='10.0.2.0/24',
+        subnet_type='private',
+        availability_zone='us-east-1b',
+    ))
 
     return organization, membership, True
