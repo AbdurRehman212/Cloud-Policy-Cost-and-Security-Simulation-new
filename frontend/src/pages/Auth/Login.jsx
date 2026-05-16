@@ -1,13 +1,15 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { useDispatch, useSelector } from 'react-redux';
 import { login, clearError } from '../../store/slices/authSlice';
 import toast from 'react-hot-toast';
 const Login = () => {
   const dispatch = useDispatch();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const { loading, error, isAuthenticated } = useSelector((state) => state.auth);
   const submitLockRef = useRef(false);
+  const redirectTarget = searchParams.get('redirect') || '/';
   const [formData, setFormData] = useState({
     email: '',
     password: '',
@@ -15,9 +17,9 @@ const Login = () => {
 
   useEffect(() => {
     if (isAuthenticated) {
-      navigate('/', { replace: true });
+      navigate(redirectTarget, { replace: true });
     }
-  }, [isAuthenticated, navigate]);
+  }, [isAuthenticated, navigate, redirectTarget]);
 
   useEffect(() => {
     if (error) {
@@ -32,7 +34,7 @@ const Login = () => {
     try {
       const result = await dispatch(login(formData));
       if (login.fulfilled.match(result)) {
-        navigate('/', { replace: true });
+        navigate(redirectTarget, { replace: true });
       }
     } finally {
       submitLockRef.current = false;

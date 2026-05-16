@@ -1,7 +1,6 @@
 import { createSlice, createAsyncThunk } from '@reduxjs/toolkit';
-import axios from 'axios';
+import apiClient from '../../services/api';
 import { setCurrentOrganization, switchOrganization } from './organizationSlice';
-const API_URL = 'http://localhost:5000/api';
 
 const getOrgId = (value) => {
   if (value && typeof value === 'object') {
@@ -13,10 +12,7 @@ export const fetchCurrentCosts = createAsyncThunk(
   'cost/fetchCurrent',
   async (orgId, { getState, rejectWithValue }) => {
     try {
-      const token = getState().auth.token;
-      const response = await axios.get(`${API_URL}/cost/current?organization_id=${orgId}`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
+      const response = await apiClient.get(`/cost/current?organization_id=${orgId}`);
       return response.data;
     } catch (error) {
       return rejectWithValue(error.response?.data?.error);
@@ -27,10 +23,8 @@ export const fetchForecast = createAsyncThunk(
   'cost/fetchForecast',
   async ({ orgId, days }, { getState, rejectWithValue }) => {
     try {
-      const token = getState().auth.token;
-      const response = await axios.get(
-        `${API_URL}/cost/forecast?organization_id=${orgId}&days=${days}`,
-        { headers: { Authorization: `Bearer ${token}` } }
+      const response = await apiClient.get(
+        `/cost/forecast?organization_id=${orgId}&days=${days}`,
       );
       return response.data;
     } catch (error) {
@@ -42,10 +36,8 @@ export const fetchOptimization = createAsyncThunk(
   'cost/fetchOptimization',
   async (orgId, { getState, rejectWithValue }) => {
     try {
-      const token = getState().auth.token;
-      const response = await axios.get(
-        `${API_URL}/cost/optimization?organization_id=${orgId}`,
-        { headers: { Authorization: `Bearer ${token}` } }
+      const response = await apiClient.get(
+        `/cost/optimization?organization_id=${orgId}`,
       );
       return response.data;
     } catch (error) {
@@ -63,7 +55,16 @@ const costSlice = createSlice({
     recommendations: [],
     loading: false,
   },
-  reducers: {},
+  reducers: {
+    clearCostState: (state) => {
+      state.activeOrgId = null;
+      state.currentCosts = null;
+      state.forecast = null;
+      state.budgets = [];
+      state.recommendations = [];
+      state.loading = false;
+    },
+  },
   extraReducers: (builder) => {
     builder
       .addCase(setCurrentOrganization, (state, action) => {
@@ -135,4 +136,5 @@ const costSlice = createSlice({
       });
   },
 });
+export const { clearCostState } = costSlice.actions;
 export default costSlice.reducer;

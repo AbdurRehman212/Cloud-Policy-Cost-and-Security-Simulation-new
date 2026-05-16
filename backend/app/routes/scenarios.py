@@ -611,7 +611,6 @@ def run_scenario(scenario_id):
     if not _check_org_access(user_id, org_id, 'member'):
         return _error('Access denied', status_code=403, code='forbidden')
 
-    from app import simulation_engine
     from app.services.scenario_runner import scenario_runner
 
     result = scenario_runner.start(scenario_id=sid, org_id=org_id)

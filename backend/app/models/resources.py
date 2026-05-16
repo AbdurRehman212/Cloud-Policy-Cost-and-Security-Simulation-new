@@ -229,6 +229,7 @@ class Database(db.Model):
     publicly_accessible = db.Column(db.Boolean, default=False)
     storage_encrypted = db.Column(db.Boolean, default=False)
     vpc_security_groups = db.Column(db.JSON, default=list)
+    tags = db.relationship('ResourceTag', backref='database', lazy='dynamic')
     # Performance Metrics
     cpu_utilization = db.Column(db.Float, default=0.0)
     memory_utilization = db.Column(db.Float, default=0.0)
@@ -267,7 +268,8 @@ class Database(db.Model):
             'database_connections': self.database_connections,
             'hourly_rate': self.hourly_rate,
             'current_cost': round(self.total_runtime_hours * self.hourly_rate, 4),
-            'created_at': self.created_at.isoformat() if self.created_at else None
+            'created_at': self.created_at.isoformat() if self.created_at else None,
+            'tags': [tag.to_dict() for tag in self.tags],
         }
 
 

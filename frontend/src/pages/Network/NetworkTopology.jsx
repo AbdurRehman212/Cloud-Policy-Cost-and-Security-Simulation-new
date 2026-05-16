@@ -10,7 +10,7 @@ import {
   ChevronDownIcon,
 } from "@heroicons/react/24/outline";
 
-const API_URL = process.env.REACT_APP_API_URL || "http://localhost:5000/api";
+const API_URL = process.env.REACT_APP_API_URL || "/api";
 
 const STATUS_BADGE = {
   running: "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400",

@@ -3,6 +3,7 @@ from flask_jwt_extended import jwt_required
 from sqlalchemy import text
 from app import db
 from flask import current_app
+from app.services.control_plane import clear_snapshot_cache
 
 admin_bp = Blueprint('admin', __name__)
 
@@ -63,9 +64,9 @@ def reset_system():
                 sim.org_metric_history.clear()
             if hasattr(sim, '_vm_des'):
                 sim._vm_des.clear()
-                
+
         # Also clear control_plane cache
-        _snapshot_cache.clear()
+        clear_snapshot_cache()
         try:
             from app.services.control_plane import _state_store
             _state_store.clear()

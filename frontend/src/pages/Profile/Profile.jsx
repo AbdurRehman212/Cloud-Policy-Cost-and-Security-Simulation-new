@@ -4,8 +4,9 @@ import axios from "axios";
 import toast from "react-hot-toast";
 import { EyeIcon, EyeSlashIcon } from "@heroicons/react/24/outline";
 import { switchOrganization } from "../../store/slices/organizationSlice";
+import { updateProfile } from "../../store/slices/authSlice";
 
-const API_URL = process.env.REACT_APP_API_URL || "http://localhost:5000/api";
+const API_URL = process.env.REACT_APP_API_URL || "/api";
 
 const LEVEL_TITLES = {
   1: "Cloud Curious",
@@ -27,6 +28,7 @@ const TIMEZONES = ["UTC", "PKT", "EST", "PST", "IST"];
 
 export default function Profile() {
   const dispatch = useDispatch();
+  const { user: reduxUser } = useSelector((state) => state.auth);
   const { token } = useSelector((state) => state.auth);
   const { organizations, currentOrganization } = useSelector((state) => state.organization);
 
@@ -62,9 +64,9 @@ export default function Profile() {
         ]);
         const prof = profRes.data?.data || {};
         setProfileData(prof);
-        setDisplayName(
-          `${prof.user?.first_name || ""} ${prof.user?.last_name || ""}`.trim()
-        );
+        // Use Redux user as primary source; fall back to API response
+        const savedName = reduxUser?.first_name || `${prof.user?.first_name || ""} ${prof.user?.last_name || ""}`.trim();
+        setDisplayName(savedName);
         setTimezone(prof.profile?.timezone || "UTC");
         setProgress(progRes.data?.data || null);
       } catch {
@@ -81,14 +83,15 @@ export default function Profile() {
     e.preventDefault();
     setSavingProfile(true);
     try {
-      await axios.put(
-        `${API_URL}/auth/profile`,
-        { display_name: displayName, timezone },
-        { headers }
-      );
-      toast.success("Saved!");
+      const result = await dispatch(updateProfile({ display_name: displayName || reduxUser?.first_name, timezone }));
+      if (updateProfile.fulfilled.match(result)) {
+        toast.success("Profile saved");
+        // Redux state already updated with user data (state.user)
+      } else {
+        toast.error(result.payload || "Failed to save");
+      }
     } catch (err) {
-      toast.error(err?.response?.data?.error?.message || "Failed to save");
+      toast.error("Failed to save");
     } finally {
       setSavingProfile(false);
     }
@@ -122,7 +125,7 @@ export default function Profile() {
     }
   };
 
-  const user = profileData?.user || {};
+  const user = reduxUser || profileData?.user || {};
   const initials = (user.first_name?.[0] || "?").toUpperCase();
   const level = progress?.level || 1;
   const levelTitle = LEVEL_TITLES[level] || "Cloud Expert";

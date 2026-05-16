@@ -7,6 +7,21 @@ import { io } from 'socket.io-client';
 
 export const API_BASE_URL = '/api';
 
+export const disconnectAllSockets = () => {
+  if (!window._socketInstances) return;
+
+  Object.values(window._socketInstances).forEach((socket) => {
+    try {
+      socket.off();
+      socket.disconnect();
+    } catch (error) {
+      // Best-effort cleanup only.
+    }
+  });
+
+  window._socketInstances = {};
+};
+
 // Shared axios instance with auth token injection
 const apiClient = axios.create({
   baseURL: API_BASE_URL,
@@ -30,6 +45,7 @@ apiClient.interceptors.response.use(
       // Token expired — clear storage but don't redirect here
       localStorage.removeItem('token');
       localStorage.removeItem('refresh_token');
+      disconnectAllSockets();
     }
     return Promise.reject(error);
   }

@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useSelector } from "react-redux";
 import { useNavigate, useParams } from "react-router-dom";
 import axios from "axios";
@@ -10,10 +10,8 @@ import {
   BoltIcon,
 } from "@heroicons/react/24/outline";
 import toast from "react-hot-toast";
-import { io } from "socket.io-client";
 
-const API_URL = process.env.REACT_APP_API_URL || "http://localhost:5000/api";
-const WS_URL = process.env.REACT_APP_WS_URL || "http://localhost:5000";
+const API_URL = process.env.REACT_APP_API_URL || "/api";
 
 const ScenarioDetail = () => {
   const { token, user } = useSelector((state) => state.auth);
@@ -32,9 +30,8 @@ const ScenarioDetail = () => {
   });
 
   // Live simulation state
-  const [simRun, setSimRun] = useState(null); // { running, ticks: [], totalTicks, scenarioId }
+  const [simRun, setSimRun] = useState(null); // { running, currentTick, totalTicks, scenarioId, completed }
   const [startingRun, setStartingRun] = useState(false);
-  const socketRef = useRef(null);
 
   const authHeaders = useMemo(
     () => (token ? { Authorization: `Bearer ${token}` } : {}),
@@ -76,46 +73,32 @@ const ScenarioDetail = () => {
     loadScenario();
   }, [loadScenario]);
 
-  // ── SocketIO: listen for live scenario tick events ─────────────────────────
-  useEffect(() => {
+  const refreshRunStatus = useCallback(async () => {
     if (!orgId || !token) return;
 
-    const socket = io(WS_URL, {
-      transports: ["websocket"],
-      namespace: "/metrics",
-      auth: { token },
-    });
-    socketRef.current = socket;
-
-    socket.on("connect", () => {
-      socket.emit("join_room", { org_id: orgId, room: `org_${orgId}` });
-    });
-
-    socket.on("scenario_tick", (data) => {
-      if (String(data.scenario_id) !== String(id)) return;
+    try {
+      const response = await axios.get(`${API_URL}/scenarios/${id}/run/status`, {
+        headers: authHeaders,
+        params: { organization_id: orgId },
+      });
+      const status = response?.data?.data || {};
       setSimRun((prev) => {
         if (!prev) return prev;
         return {
           ...prev,
-          running: true,
-          ticks: [...prev.ticks, data],
+          running: Boolean(status.is_running),
+          currentTick: Number(status.current_tick || 0),
+          totalTicks: Number(status.total_ticks || prev.totalTicks || 0),
         };
       });
-    });
+    } catch (error) {
+      console.error("Failed to load scenario run status", error);
+    }
+  }, [authHeaders, id, orgId, token]);
 
-    socket.on("scenario_complete", (data) => {
-      if (String(data.scenario_id) !== String(id)) return;
-      setSimRun((prev) =>
-        prev ? { ...prev, running: false, completed: true } : prev
-      );
-      toast.success("Simulation complete!");
-    });
-
-    return () => {
-      socket.disconnect();
-      socketRef.current = null;
-    };
-  }, [orgId, token, id]);
+  useEffect(() => {
+    refreshRunStatus();
+  }, [refreshRunStatus]);
 
   // ── Run simulation via POST /scenarios/<id>/run ────────────────────────────
   const handleRunSimulation = useCallback(async () => {
@@ -125,14 +108,14 @@ const ScenarioDetail = () => {
       (acc, seg) => acc + (seg.ticks || 0),
       0,
     );
-    setSimRun({ running: false, ticks: [], totalTicks, scenarioId: id, completed: false });
+    setSimRun({ running: true, currentTick: 0, totalTicks, scenarioId: id, completed: false });
     try {
       await axios.post(
         `${API_URL}/scenarios/${id}/run`,
         { org_id: orgId, tick_delay_seconds: 0.4 },
         { headers: authHeaders },
       );
-      setSimRun((prev) => prev ? { ...prev, running: true } : prev);
+      await refreshRunStatus();
       toast.success("Simulation running…");
     } catch (err) {
       const code = err?.response?.data?.error?.code;
@@ -141,12 +124,12 @@ const ScenarioDetail = () => {
         setSimRun(null);
       } else {
         toast("Simulation already running for this org.");
-        setSimRun((prev) => prev ? { ...prev, running: true } : prev);
+        setSimRun((prev) => (prev ? { ...prev, running: true } : prev));
       }
     } finally {
       setStartingRun(false);
     }
-  }, [authHeaders, id, orgId, scenario]);
+  }, [authHeaders, id, orgId, refreshRunStatus, scenario]);
 
   const trackPageVisit = useCallback((page) => {
     setVisitedPages((prev) => {
@@ -564,56 +547,31 @@ const ScenarioDetail = () => {
                 <div className="card border-l-4 border-blue-500">
                   <div className="flex items-center justify-between">
                     <p className="text-xs font-semibold uppercase tracking-wide text-blue-600 dark:text-blue-400">
-                      Live simulation
+                      Backend run status
                     </p>
                     <span className={`text-xs font-medium ${
                       simRun.running ? "text-green-600" : simRun.completed ? "text-gray-500" : "text-amber-500"
                     }`}>
-                      {simRun.running ? "Running…" : simRun.completed ? "Complete" : "Starting…"}
+                      {simRun.running ? "Running" : simRun.completed ? "Complete" : "Started"}
                     </span>
                   </div>
 
-                  {/* Progress bar */}
+                  <p className="mt-3 text-xs text-gray-500 dark:text-gray-400">
+                    The backend exposes run state but does not stream tick-by-tick websocket events.
+                  </p>
+
                   <div className="mt-3">
                     <div className="flex justify-between text-xs text-gray-500 mb-1">
-                      <span>Tick {simRun.ticks.length} / {simRun.totalTicks}</span>
-                      <span>{Math.round((simRun.ticks.length / Math.max(1, simRun.totalTicks)) * 100)}%</span>
+                      <span>Current tick {simRun.currentTick || 0} / {simRun.totalTicks}</span>
+                      <span>{Math.round(((simRun.currentTick || 0) / Math.max(1, simRun.totalTicks)) * 100)}%</span>
                     </div>
                     <div className="h-2 w-full rounded-full bg-gray-200 dark:bg-gray-700">
                       <div
                         className="h-2 rounded-full bg-blue-500 transition-all"
-                        style={{ width: `${(simRun.ticks.length / Math.max(1, simRun.totalTicks)) * 100}%` }}
+                        style={{ width: `${((simRun.currentTick || 0) / Math.max(1, simRun.totalTicks)) * 100}%` }}
                       />
                     </div>
                   </div>
-
-                  {/* Last tick metrics */}
-                  {simRun.ticks.length > 0 && (() => {
-                    const last = simRun.ticks[simRun.ticks.length - 1];
-                    const m = last.metrics || {};
-                    return (
-                      <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
-                        <div className="rounded-lg bg-gray-50 p-2 dark:bg-gray-800">
-                          <p className="font-semibold text-gray-500">RPS</p>
-                          <p className="text-lg font-bold text-blue-600">{last.rps}</p>
-                        </div>
-                        <div className="rounded-lg bg-gray-50 p-2 dark:bg-gray-800">
-                          <p className="font-semibold text-gray-500">Queue depth</p>
-                          <p className={`text-lg font-bold ${
-                            m.queue_depth > 0 ? "text-red-500" : "text-green-600"
-                          }`}>{m.queue_depth?.toFixed(0) ?? "—"}</p>
-                        </div>
-                        <div className="rounded-lg bg-gray-50 p-2 dark:bg-gray-800">
-                          <p className="font-semibold text-gray-500">Latency</p>
-                          <p className="text-lg font-bold text-amber-600">{m.latency_ms?.toFixed(0) ?? "—"} ms</p>
-                        </div>
-                        <div className="rounded-lg bg-gray-50 p-2 dark:bg-gray-800">
-                          <p className="font-semibold text-gray-500">CPU avg</p>
-                          <p className="text-lg font-bold text-purple-600">{m.cpu_avg?.toFixed(1) ?? "—"}%</p>
-                        </div>
-                      </div>
-                    );
-                  })()}
                 </div>
               )}
 

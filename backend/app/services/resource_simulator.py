@@ -56,19 +56,24 @@ class ResourceSimulator:
 
     # Hard cap: max VMs processed per tick. Prevents the sim thread from
     # monopolizing the GIL when the DB has thousands of autoscaled rows.
-    MAX_SIM_VMS: int = 20
-    # Hard global cap on autoscaled VMs (matches simulation_core.MAX_VMS)
+    MAX_SIM_VMS: int = 12
+    # Hard global cap on autoscaled VMs
     MAX_VMS: int = 20
     # Security analysis (ML model call) is expensive — run every N ticks only.
-    _SECURITY_ANALYSIS_EVERY_N_TICKS: int = 12
+    _SECURITY_ANALYSIS_EVERY_N_TICKS: int = 24
 
-    def __init__(self, tick_interval: int = 5, history_limit: int = 120):
+    def __init__(self, tick_interval: int = 5, history_limit: int = 120, seed: int = 1337):
         self.tick_interval = tick_interval
         # Module 4 Part G: explicit simulation time-step in seconds.
         # Kept as an alias of tick_interval so downstream code can reference
         # a self-documenting name; existing callers using tick_interval keep working.
         self.dt_seconds = tick_interval
         self.history_limit = history_limit
+        self.seed = seed
+        # Runtime-owned RNGs make repeated simulator runs reproducible without
+        # mutating process-global random state used by Flask/tests.
+        self._rng = random.Random(seed)
+        self._np_rng = np.random.default_rng(seed + 1)
         self.running = False
         self.thread = None
         self.stop_event = Event()
@@ -103,7 +108,7 @@ class ResourceSimulator:
 
     def _get_generator(self) -> SyntheticDataGenerator:
         if self._generator is None:
-            self._generator = SyntheticDataGenerator()
+            self._generator = SyntheticDataGenerator(seed=self.seed + 2)
         return self._generator
 
     def start(self, app=None):
@@ -156,7 +161,8 @@ class ResourceSimulator:
                 # Throttle to a controlled cadence so the GIL is released and
                 # Flask request threads stay responsive.
                 elapsed = time.monotonic() - tick_started
-                sleep_for = max(0.05, 0.2 - elapsed)
+                target_cadence = max(0.75, min(1.25, self.tick_interval * 0.2))
+                sleep_for = max(0.05, target_cadence - elapsed)
                 self.stop_event.wait(sleep_for)
 
     def _update_resources(self):
@@ -384,12 +390,6 @@ class ResourceSimulator:
             )
 
         self._tick_count += 1
-        # NOTE: Autoscaling decisions are now exclusively owned by
-        # SimulationEngine.tick().  ResourceSimulator no longer calls
-        # check_autoscaling() to prevent duplicated, scattered scaling logic.
-        # check_autoscaling() is kept in this class only for telemetry continuity
-        # but is NOT called here.  Do not add it back.
-
         # Store per-org aggregated metric history point
         org_ids = {vm.organization_id for vm in vms} | {database.organization_id for database in dbs}
         for org_id in org_ids:
@@ -415,174 +415,6 @@ class ResourceSimulator:
                 moment=moment,
             )
 
-    def check_autoscaling(self, org_id, app):
-        """Autoscale overloaded VMs and flag underutilized ones.
-
-        Scaling decision = f(queue_depth, latency, CPU).
-        Global quota: total non-terminated VMs across the org must not exceed MAX_VMS.
-        """
-        if app is None:
-            return
-
-        with app.app_context():
-            vms = VirtualMachine.query.filter_by(
-                organization_id=org_id,
-                status=ResourceStatus.RUNNING,
-            ).all()
-            for vm in vms:
-                history = list(self.vm_metric_history.get(vm.instance_id, []))
-                if not history:
-                    continue
-
-                recent_24 = history[-24:]
-                recent_60 = history[-60:]
-                now = datetime.utcnow()
-                last_scaled = self.last_scaled_at.get(vm.instance_id)
-
-                # ── Derive queue depth from current RPS and total capacity ─────
-                incoming_rps = int(vm.requests_per_second or 50)
-                # Capacity table (RPS max per instance type)
-                _CAP = {
-                    't2.micro': 50, 't2.small': 100, 't2.medium': 200,
-                    't2.large': 400, 't2.xlarge': 800,
-                    't3.micro': 60, 't3.small': 120, 't3.medium': 250,
-                    'm5.large': 300, 'm5.xlarge': 600, 'm5.2xlarge': 1200,
-                    'c5.large': 400, 'c5.xlarge': 800, 'c5.2xlarge': 1600,
-                }
-                total_capacity = sum(
-                    _CAP.get(v.instance_type or 't2.micro', 200)
-                    for v in vms
-                )
-                queue_depth = max(0, incoming_rps - total_capacity)
-                avg_cpu = float(np.mean([p.get('cpu', 0.0) for p in recent_24])) if recent_24 else 0.0
-
-                # ── Debug: queue calculation ──────────────────────────────
-                print(
-                    f"[AUTOSCALER:QUEUE] org={org_id} vm={vm.instance_id} "
-                    f"incoming_rps={incoming_rps} total_capacity={total_capacity} "
-                    f"queue_depth={queue_depth} avg_cpu_24tick={avg_cpu:.1f}%"
-                )
-
-                if (
-                    len(recent_24) >= 24
-                    and float(np.mean([point.get('cpu', 0.0) for point in recent_24])) > 70.0
-                    and (
-                        last_scaled is None
-                        or (now - last_scaled).total_seconds() >= 600
-                    )
-                ):
-                    # ── Enforce global VM quota before spawning ──────────────
-                    total_active = VirtualMachine.query.filter(
-                        VirtualMachine.organization_id == org_id,
-                        VirtualMachine.status != ResourceStatus.TERMINATED,
-                    ).count()
-                    if total_active >= self.MAX_VMS:
-                        print(
-                            f"[AUTOSCALER:SCALE_OUT] BLOCKED org={org_id} vm={vm.instance_id} "
-                            f"reason=global_quota_reached total_vms={total_active}/{self.MAX_VMS}"
-                        )
-                        continue
-
-                    timestamp = now.strftime('%Y%m%d%H%M%S')
-                    scaled_vm = VirtualMachine(
-                        organization_id=vm.organization_id,
-                        name=f'{vm.name}-scaled-{timestamp}',
-                        instance_id=f'{vm.instance_id}-scaled-{timestamp}',
-                        instance_type=vm.instance_type,
-                        status=ResourceStatus.PENDING,
-                        vcpu=vm.vcpu,
-                        memory_gb=vm.memory_gb,
-                        storage_gb=vm.storage_gb,
-                        private_ip=f'10.0.{random.randint(0, 255)}.{random.randint(1, 254)}',
-                        public_ip=None,
-                        subnet_id=vm.subnet_id,
-                        vpc_id=vm.vpc_id,
-                        cpu_utilization=0.0,
-                        memory_utilization=0.0,
-                        disk_read_iops=0.0,
-                        disk_write_iops=0.0,
-                        network_in_mbps=0.0,
-                        network_out_mbps=0.0,
-                        image_id=vm.image_id,
-                        key_name=vm.key_name,
-                        hourly_rate=vm.hourly_rate,
-                    )
-                    scaled_vm.security_groups = list(vm.security_groups)
-                    db.session.add(scaled_vm)
-                    db.session.flush()
-
-                    self.last_scaled_at[vm.instance_id] = now
-
-                    # ── Debug: scaling decision ─────────────────────────────────
-                    print(
-                        f"[AUTOSCALER:SCALE_OUT] DECISION org={org_id} "
-                        f"source_vm={vm.instance_id} new_vm={scaled_vm.instance_id} "
-                        f"trigger=cpu_high({avg_cpu:.1f}%) queue={queue_depth} "
-                        f"total_vms_after={total_active + 1}/{self.MAX_VMS}"
-                    )
-
-                    db.session.add(
-                        AuditLog(
-                            organization_id=org_id,
-                            action=f'Auto Scaling triggered for {vm.name}',
-                            resource_type='vm',
-                            resource_id=vm.instance_id,
-                            new_values={
-                                'scaled_vm_id': scaled_vm.id,
-                                'scaled_instance_id': scaled_vm.instance_id,
-                                'source_vm_id': vm.id,
-                            },
-                        )
-                    )
-                    db.session.commit()
-
-                    socketio.emit(
-                        'autoscaling_event',
-                        {
-                            'org_id': org_id,
-                            'message': 'Auto Scaling triggered for {name}'.format(name=vm.name),
-                            'source_vm': {
-                                'id': vm.id,
-                                'instance_id': vm.instance_id,
-                                'name': vm.name,
-                            },
-                            'scaled_vm': {
-                                'id': scaled_vm.id,
-                                'instance_id': scaled_vm.instance_id,
-                                'name': scaled_vm.name,
-                            },
-                        },
-                        room=f'org_{org_id}',
-                        namespace='/metrics',
-                    )
-
-                    from app.routes.resources import _complete_vm_creation
-
-                    socketio.start_background_task(
-                        _complete_vm_creation,
-                        scaled_vm.id,
-                        app,
-                    )
-
-                if len(recent_60) >= 60:
-                    avg_cpu = float(np.mean([point.get('cpu', 0.0) for point in recent_60]))
-                    if avg_cpu < 10.0:
-                        self.waste_candidates.add(vm.id)
-                        socketio.emit(
-                            'waste_detected',
-                            {
-                                'org_id': org_id,
-                                'vm_id': vm.id,
-                                'instance_id': vm.instance_id,
-                                'name': vm.name,
-                                'avg_cpu': round(avg_cpu, 2),
-                                'message': 'Low utilization - consider stopping',
-                            },
-                            room=f'org_{org_id}',
-                            namespace='/metrics',
-                        )
-
-
     # ── Queue model constants (work-ms) ──────────────────────────────────────
     _QUEUE_THRESHOLD_MS = 1000.0   # 1s of backlog → overload flag
     _MAX_QUEUE_MS = 5000.0         # 5s of backlog → requests dropped
@@ -593,11 +425,11 @@ class ResourceSimulator:
 
     # ── Task 1: Lognormal sigma per workload pattern ──────────────────────────
     _SERVICE_TIME_SIGMA = {
-        'steady':  0.2,   # tight distribution
-        'spiky':   0.8,   # long tail, high variance
-        'diurnal': 0.4,   # moderate variance
+        'steady':  0.15,  # tight distribution
+        'spiky':   0.45,  # still bursty, but not stress-test sharp
+        'diurnal': 0.3,   # moderate variance
     }
-    _DEFAULT_SIGMA = 0.4
+    _DEFAULT_SIGMA = 0.3
 
     # ── Workload capacity table (max rps at 100% CPU) ────────────────────────
     RPS_CAPACITY = {
@@ -613,11 +445,11 @@ class ResourceSimulator:
     # service_time = 1000 / capacity  (ms to process one request at full speed)
     # Stored explicitly so heavier instances serve requests faster.
     _BASE_SERVICE_TIME_MS = {
-        't2.micro':    20.0,   # 1000 / 50
-        't2.small':    10.0,   # 1000 / 100
-        't2.medium':    5.0,   # 1000 / 200
-        't2.large':     2.5,   # 1000 / 400
-        't2.xlarge':    1.25,  # 1000 / 800
+        't2.micro':    15.0,
+        't2.small':     8.0,
+        't2.medium':    3.8,
+        't2.large':     2.0,
+        't2.xlarge':    1.0,
     }
     _DEFAULT_SERVICE_TIME_MS = 5.0
 
@@ -625,11 +457,11 @@ class ResourceSimulator:
     # Defines (light_pct, heavy_pct, light_multiplier, heavy_multiplier)
     # light requests finish faster; heavy requests take longer.
     _REQUEST_MIX = {
-        'steady':  {'light': 0.70, 'heavy': 0.30, 'light_factor': 0.6, 'heavy_factor': 2.5},
-        'spiky':   {'light': 0.40, 'heavy': 0.60, 'light_factor': 0.5, 'heavy_factor': 4.0},
-        'diurnal': {'light': 0.65, 'heavy': 0.35, 'light_factor': 0.7, 'heavy_factor': 2.0},
+        'steady':  {'light': 0.70, 'heavy': 0.30, 'light_factor': 0.65, 'heavy_factor': 2.0},
+        'spiky':   {'light': 0.40, 'heavy': 0.60, 'light_factor': 0.60, 'heavy_factor': 2.0},
+        'diurnal': {'light': 0.65, 'heavy': 0.35, 'light_factor': 0.75, 'heavy_factor': 1.8},
     }
-    _DEFAULT_MIX = {'light': 0.60, 'heavy': 0.40, 'light_factor': 0.6, 'heavy_factor': 2.5}
+    _DEFAULT_MIX = {'light': 0.60, 'heavy': 0.40, 'light_factor': 0.65, 'heavy_factor': 2.0}
 
     # ── Learning text per pattern ─────────────────────────────────────────────
     _WORKLOAD_LEARNING = {
@@ -670,30 +502,30 @@ class ResourceSimulator:
 
         # ── Pattern modulation ────────────────────────────────────────────────
         if pattern == 'steady':
-            fluctuation = random.uniform(-0.05, 0.05)
+            fluctuation = self._rng.uniform(-0.03, 0.03)
             effective_rps = max(1, int(base_rps * (1 + fluctuation)))
 
         elif pattern == 'spiky':
             spike_key = vm.instance_id
             if spike_key in self._spike_cycles:
                 if self._spike_cycles[spike_key] > 0:
-                    effective_rps = int(base_rps * random.uniform(2.0, 3.5))
+                    effective_rps = int(base_rps * self._rng.uniform(1.2, 1.5))
                     self._spike_cycles[spike_key] -= 1
                 else:
                     del self._spike_cycles[spike_key]
-                    effective_rps = max(1, int(base_rps * random.uniform(0.95, 1.05)))
+                    effective_rps = max(1, int(base_rps * self._rng.uniform(0.97, 1.03)))
             else:
-                if random.random() < 0.10:
-                    effective_rps = int(base_rps * random.uniform(2.0, 3.5))
-                    self._spike_cycles[spike_key] = random.randint(1, 5)
+                if self._rng.random() < 0.03:
+                    effective_rps = int(base_rps * self._rng.uniform(1.2, 1.5))
+                    self._spike_cycles[spike_key] = 1
                 else:
-                    effective_rps = max(1, int(base_rps * random.uniform(0.9, 1.1)))
+                    effective_rps = max(1, int(base_rps * self._rng.uniform(0.97, 1.03)))
 
         else:  # diurnal
             hour_frac = moment.hour + moment.minute / 60.0
             sinusoid = math.sin((hour_frac / 24.0 - 0.25) * 2 * math.pi)
             scale = 0.5 + 0.5 * sinusoid
-            noise = random.gauss(0, 0.07)
+            noise = self._rng.gauss(0, 0.04)
             scale = max(0.0, min(1.0, scale + noise))
             effective_rps = max(1, int(base_rps * (0.3 + 0.7 * scale)))
 
@@ -705,7 +537,7 @@ class ResourceSimulator:
         # lognormal parameterised so that E[X] == avg_st_ms:
         #   mu = ln(mean) - sigma^2 / 2
         mu = math.log(max(avg_st_ms, 0.1)) - (sigma ** 2) / 2.0
-        service_time_sample = float(np.random.lognormal(mean=mu, sigma=sigma))
+        service_time_sample = float(self._np_rng.lognormal(mean=mu, sigma=sigma))
         # clamp to sane bounds (10x mean max)
         service_time_sample = max(0.1, min(avg_st_ms * 10.0, service_time_sample))
 
@@ -761,8 +593,8 @@ class ResourceSimulator:
         cpu = round(max(0.0, min(100.0, cpu)), 2)
 
         # ── Decoupled memory model ────────────────────────────────────────────
-        workload_factor = min(10.0, (incoming_rate / max(1, capacity)) * 8.0)
-        memory = base_mem_pct + (cpu * 0.4) + workload_factor + random.gauss(0, 2.5)
+        workload_factor = min(8.0, (incoming_rate / max(1, capacity)) * 5.0)
+        memory = base_mem_pct + (cpu * 0.35) + workload_factor + self._rng.gauss(0, 1.8)
         memory = round(max(0.0, min(100.0, memory)), 2)
 
         return (
@@ -822,10 +654,10 @@ class ResourceSimulator:
         memory = float(vm.memory_utilization or 0)
         network_in = float(vm.network_in_mbps or 0)
         network_out = float(vm.network_out_mbps or 0)
-        requests_per_minute = int(max(120, network_in * 20 + cpu * 35 + random.uniform(0, 160)))
-        avg_latency_ms = round(max(15.0, 35 + cpu * 2.4 + network_out * 0.45 + random.uniform(-5, 25)), 2)
-        error_rate = round(min(0.42, max(0.002, (cpu / 100.0) * 0.06 + random.uniform(0.0, 0.015))), 4)
-        auth_failures = int(max(0, (cpu - 70) / 5 + random.uniform(0, 4))) if cpu > 70 else int(random.uniform(0, 2))
+        requests_per_minute = int(max(120, network_in * 14 + cpu * 24 + self._rng.uniform(0, 100)))
+        avg_latency_ms = round(max(15.0, 30 + cpu * 1.8 + network_out * 0.3 + self._rng.uniform(-4, 18)), 2)
+        error_rate = round(min(0.35, max(0.002, (cpu / 100.0) * 0.05 + self._rng.uniform(0.0, 0.01))), 4)
+        auth_failures = int(max(0, (cpu - 70) / 5 + self._rng.uniform(0, 4))) if cpu > 70 else int(self._rng.uniform(0, 2))
 
         return {
             'requests_per_minute': requests_per_minute,
@@ -943,6 +775,22 @@ class ResourceSimulator:
                     )
                 )
 
+        socketio.emit(
+            'threats:update',
+            {
+                'threat': threat.to_dict(),
+                'source': 'resource_simulator',
+            },
+            room=f'org_{vm.organization_id}',
+            namespace='/metrics',
+        )
+        socketio.emit(
+            'dashboard_update',
+            {'organization_id': vm.organization_id},
+            room=f'org_{vm.organization_id}',
+            namespace='/metrics',
+        )
+
         self._append_activity(
             vm.organization_id,
             title='Security threat detected',
@@ -1032,8 +880,8 @@ class ResourceSimulator:
             diurnal = math.sin(hour_frac / 24.0 * 2 * math.pi) * 15.0
             series.append({
                 'name': t.strftime('%H:%M'),
-                'cpu': max(0.0, round(cpu + diurnal + random.gauss(0, 3.5), 2)),
-                'memory': max(0.0, round(memory + diurnal * 0.6 + random.gauss(0, 2.5), 2)),
+                'cpu': max(0.0, round(cpu + diurnal + self._rng.gauss(0, 3.5), 2)),
+                'memory': max(0.0, round(memory + diurnal * 0.6 + self._rng.gauss(0, 2.5), 2)),
             })
         return series
 
@@ -1168,8 +1016,11 @@ class ResourceSimulator:
                 'latency_avg_ms': 0.0,
                 'p95_latency_ms': 0.0,
                 'dropped_requests_total': 0,
+                'dropped_recent_total': 0,
                 'overloaded_vms': 0,
                 'vm_count': 0,
+                'requests_per_second': 0,
+                'avg_service_time_ms': 5.0,
             }
 
         queue_values: list[float] = []
@@ -1270,24 +1121,3 @@ class ResourceSimulator:
             return []
         cutoff = datetime.utcnow() - timedelta(minutes=minutes)
         return [pt for pt in history if pt.get('timestamp', '') >= cutoff.isoformat()]
-
-    def simulate_load_test(self, vm_id, duration_seconds=60, intensity='medium'):
-        """Simulate load test on a specific VM."""
-        vm = VirtualMachine.query.get(vm_id)
-        if not vm or vm.status != ResourceStatus.RUNNING:
-            return False
-
-        intensity_factor = {'low': 1.5, 'medium': 3, 'high': 5}.get(intensity, 3)
-        original_cpu = vm.cpu_utilization
-
-        def apply_load():
-            start_time = time.time()
-            while time.time() - start_time < duration_seconds:
-                vm.cpu_utilization = min(100, original_cpu * intensity_factor + np.random.normal(0, 10))
-                db.session.commit()
-                time.sleep(1)
-            vm.cpu_utilization = original_cpu
-            db.session.commit()
-
-        Thread(target=apply_load, daemon=True).start()
-        return True

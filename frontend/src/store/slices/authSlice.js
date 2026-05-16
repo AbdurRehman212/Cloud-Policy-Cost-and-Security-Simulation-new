@@ -1,6 +1,6 @@
 import { createSlice, createAsyncThunk } from '@reduxjs/toolkit';
 import axios from 'axios';
-const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:5000/api';
+const API_URL = process.env.REACT_APP_API_URL || '/api';
 // Async thunks
 export const login = createAsyncThunk(
   'auth/login',
@@ -38,6 +38,39 @@ export const fetchProfile = createAsyncThunk(
       return response?.data?.data || {};
     } catch (error) {
       return rejectWithValue(error?.response?.data?.error?.message || 'Failed to load profile');
+    }
+  }
+);
+export const updateProfile = createAsyncThunk(
+  'auth/updateProfile',
+  async (profileData, { getState, rejectWithValue }) => {
+    try {
+      const token = getState().auth.token;
+      const response = await axios.put(`${API_URL}/auth/profile`, profileData, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      return response?.data?.data || {};
+    } catch (error) {
+      return rejectWithValue(error?.response?.data?.error?.message || 'Failed to update profile');
+    }
+  }
+);
+
+// Logout thunk - calls API with refresh token
+export const logoutUser = createAsyncThunk(
+  'auth/logout',
+  async (_, { getState, rejectWithValue }) => {
+    try {
+      const refreshToken = getState().auth.refreshToken;
+      if (refreshToken) {
+        await axios.delete(`${API_URL}/auth/logout`, {
+          headers: { Authorization: `Bearer ${refreshToken}` },
+        });
+      }
+      return true;
+    } catch (error) {
+      // Even if API fails, clear local state
+      return true;
     }
   }
 );
@@ -95,6 +128,20 @@ const authSlice = createSlice({
       })
       .addCase(fetchProfile.fulfilled, (state, action) => {
         state.user = action.payload.user;
+      })
+      .addCase(updateProfile.fulfilled, (state, action) => {
+        if (action.payload.user) {
+          state.user = action.payload.user;
+        }
+      })
+      .addCase(logoutUser.fulfilled, (state) => {
+        state.user = null;
+        state.token = null;
+        state.refreshToken = null;
+        state.isAuthenticated = false;
+        localStorage.removeItem('token');
+        localStorage.removeItem('refresh_token');
+        localStorage.removeItem('activeOrg');
       });
   },
 });

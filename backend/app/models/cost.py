@@ -53,6 +53,8 @@ class Budget(db.Model):
         current = self.get_current_spend()
         return {
             'id': self.id,
+            'org_id': self.organization_id,
+            'organization_id': self.organization_id,
             'name': self.name,
             'amount': self.amount,
             'current_spend': round(current, 2),
@@ -81,6 +83,8 @@ class CostForecast(db.Model):
     growth_rate = db.Column(db.Float)
     def to_dict(self):
         return {
+            'org_id': self.organization_id,
+            'organization_id': self.organization_id,
             'forecast_date': self.forecast_date.isoformat(),
             'predicted_cost': round(self.predicted_cost, 2),
             'confidence_range': [

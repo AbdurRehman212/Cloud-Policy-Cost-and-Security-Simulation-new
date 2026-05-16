@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
@@ -17,15 +18,41 @@ except Exception:  # pragma: no cover - optional dependency
     LinearRegression = None
     StandardScaler = None
 
+logger = logging.getLogger(__name__)
+
 
 @dataclass
 class CostForecaster:
     """Forecast spending and detect idle resources."""
 
+    @staticmethod
+    def load_historical_frame() -> pd.DataFrame:
+        """Return a cost history frame derived from the 3k dataset.
+
+        Used as a fallback when no CostRecord DB rows exist for an org,
+        ensuring the forecaster always has enough history to fit a trend.
+        """
+        try:
+            from app.data_sources.real_datasets import dataset_catalog
+            frame = dataset_catalog.load_finops_frame()
+            if not frame.empty:
+                logger.info(
+                    '[cost_forecaster] Using 3k-derived cost history (%d rows)',
+                    len(frame),
+                )
+            return frame
+        except Exception as exc:
+            logger.warning('[cost_forecaster] Could not load historical frame: %s', exc)
+            return pd.DataFrame()
+
     def forecast(self, df: pd.DataFrame, days_ahead: int = 30):
         """Forecast future costs using a trend model with optional sklearn support."""
         if df is None or df.empty:
+            df = self.load_historical_frame()
+        if df is None or df.empty:
+            logger.warning('[cost_forecaster] No cost data available — returning flat fallback forecast')
             return self._fallback_forecast(days_ahead, base_cost=0.0)
+        logger.info('[cost_forecaster] Forecasting %d days from %d historical rows', days_ahead, len(df))
 
         frame = df.copy()
         frame['date'] = pd.to_datetime(frame['date'])

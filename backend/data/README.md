@@ -7,7 +7,7 @@ Do not place synthetic or fabricated data here.
 ## Recommended datasets
 
 - FinOps and utilization: Alibaba Cluster Trace v2018
-- Security / threat detection: CICIDS2017
+- Security / threat detection: `cicids_subset.csv` (lightweight CICIDS2017 subset)
 - Simulator core workload behavior: Alibaba Cluster Trace v2018
 
 ## Expected folder layout
@@ -16,8 +16,10 @@ Do not place synthetic or fabricated data here.
 backend/data/
   finops/
     *.csv, *.tsv, *.json, *.jsonl
-  security/
-    *.csv, *.tsv, *.json, *.jsonl
+  cicids_subset.csv
+
+If you need to regenerate the subset from the full CICIDS2017 export, use
+`backend/scripts/reduce_cicids.py`.
 ```
 
 ## Staging schema expected by the app

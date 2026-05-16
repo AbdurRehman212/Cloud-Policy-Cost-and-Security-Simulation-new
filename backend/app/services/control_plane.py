@@ -5,9 +5,8 @@ exposed by `resource_simulator`. Extends (never removes) existing response
 keys so the frontend continues to work unchanged.
 """
 
+import calendar
 import math
-import random
-import string
 import threading
 import time
 from datetime import datetime
@@ -36,18 +35,51 @@ alert_states = {}  # org_id -> { alert_type: state }
 # Scaling state storage for cooldown and capacity control
 scaling_state = {}  # org_id -> { last_action_time, capacity }
 
+
+def _empty_workload_snapshot() -> dict:
+    """Canonical zero-workload shape used when no simulator data exists."""
+    return {
+        'queue_avg_ms': 0.0,
+        'queue_total_ms': 0.0,
+        'latency_avg_ms': 0.0,
+        'p95_latency_ms': 0.0,
+        'dropped_requests_total': 0,
+        'dropped_recent_total': 0,
+        'overloaded_vms': 0,
+        'vm_count': 0,
+        'requests_per_second': 0,
+        'avg_service_time_ms': 5.0,
+    }
+
+
+def _normalize_workload_snapshot(raw: dict | None) -> dict:
+    """Keep REST/socket snapshots schema-stable across cold and active runtime."""
+    normalized = _empty_workload_snapshot()
+    if isinstance(raw, dict):
+        normalized.update({key: raw.get(key, value) for key, value in normalized.items()})
+    return normalized
+
+
+def clear_snapshot_cache(org_id: int | None = None) -> None:
+    """Clear the cached org snapshot(s) used by the dashboard and timeline."""
+    with _cache_lock:
+        if org_id is None:
+            _snapshot_cache.clear()
+        else:
+            _snapshot_cache.pop(org_id, None)
+
 # ── MAPE thresholds ─────────────────────────────────────────────────────────
 _QUEUE_ALARM_MS = 1000.0        # 1s of backlog → queue ALARM
 _LATENCY_P95_ALARM_MS = 500.0   # p95 SLO (ms) — also used for target BPI
 _LATENCY_P95_CRITICAL_MS = 1500.0
 _TARGET_UTIL_PCT = 60
-_SCALE_COOLDOWN_S = 10
+_SCALE_COOLDOWN_S = 15
 _CAPACITY_MIN = 1
 _CAPACITY_MAX = 10
 # Scale-in hysteresis: only scale in when BPI < target × (1 − SCALE_IN_TOLERANCE)
 _SCALE_IN_BPI_RATIO = 0.7       # AWS recommended: 70% of target triggers scale-in
 # Hard step cap: never add/remove more than this many instances per evaluation.
-_MAX_STEP = 3
+_MAX_STEP = 2
 _GLOBAL_MAX_VMS = 100
 
 # ── VM provisioning helpers for autoscaling execution ──────────────────────────
@@ -60,9 +92,15 @@ _INSTANCE_SPECS = {
 }
 
 
-def _generate_instance_id(prefix: str = "i") -> str:
-    suffix = ''.join(random.choices(string.ascii_lowercase + string.digits, k=17))
-    return f"{prefix}-{suffix}"
+def _next_autoscale_sequence(org_id: int) -> int:
+    """Return a deterministic org-local autoscale sequence."""
+    existing = (
+        VirtualMachine.query
+        .filter(VirtualMachine.organization_id == org_id)
+        .filter(VirtualMachine.name.like("autoscale-%"))
+        .count()
+    )
+    return existing + 1
 
 
 def _create_autoscale_vm(org_id: int, instance_type: str, base_rps: int, pattern: str) -> VirtualMachine:
@@ -74,16 +112,19 @@ def _create_autoscale_vm(org_id: int, instance_type: str, base_rps: int, pattern
         raise Exception(f"Organization has reached the maximum allowed limit of {_GLOBAL_MAX_VMS} resources.")
     
     spec = _INSTANCE_SPECS.get(instance_type, _INSTANCE_SPECS["t2.medium"])
+    sequence = _next_autoscale_sequence(org_id)
+    octet_3 = org_id % 256
+    octet_4 = ((sequence - 1) % 254) + 1
     vm = VirtualMachine(
         organization_id=org_id,
-        name=f"autoscale-{_generate_instance_id('i')[:8]}",
-        instance_id=_generate_instance_id('i'),
+        name=f"autoscale-org{org_id}-{sequence:03d}",
+        instance_id=f"i-autoscale-{org_id}-{sequence:03d}",
         instance_type=instance_type,
         status=ResourceStatus.RUNNING,
         vcpu=spec["vcpu"],
         memory_gb=spec["memory_gb"],
         storage_gb=8,
-        private_ip=f"10.0.{random.randint(0,255)}.{random.randint(1,254)}",
+        private_ip=f"10.0.{octet_3}.{octet_4}",
         cpu_utilization=round(spec["baseline_cpu"] * 100, 2),
         memory_utilization=round(spec["baseline_memory"] * 100, 2),
         hourly_rate=spec["hourly_rate"],
@@ -136,7 +177,7 @@ def _workload_snapshot_for(org_id: int) -> dict:
         state = simulation_engine.get_state(org_id)
         if state and state.get('is_running'):
             metrics = state.get('metrics', {})
-            return {
+            return _normalize_workload_snapshot({
                 'queue_total_ms': metrics.get('queue_depth', 0) * 10, # Mock scale for UI
                 'latency_avg_ms': metrics.get('latency_ms', 0),
                 'p95_latency_ms': metrics.get('latency_ms', 0) * 1.2,
@@ -144,15 +185,15 @@ def _workload_snapshot_for(org_id: int) -> dict:
                 'vm_count': state.get('vm_count', 0),
                 'avg_service_time_ms': 5.0,
                 'requests_per_second': metrics.get('incoming_rps', 0)
-            }
+            })
             
         from flask import current_app
         if hasattr(current_app, 'simulator'):
-            return current_app.simulator.get_org_workload_snapshot(org_id)
-        return {}
+            return _normalize_workload_snapshot(current_app.simulator.get_org_workload_snapshot(org_id))
+        return _empty_workload_snapshot()
     except Exception as e:
         print(f"[CONTROL_PLANE] Error pulling from engine: {e}")
-        return {}
+        return _empty_workload_snapshot()
 
 
 def _topology_for(org_id: int) -> dict:
@@ -202,6 +243,7 @@ def _cost_for(org_id: int) -> dict:
 
         today = datetime.utcnow().date()
         month_start = today.replace(day=1)
+        days_in_month = calendar.monthrange(today.year, today.month)[1]
         records = CostRecord.query.filter(
             CostRecord.organization_id == org_id,
             CostRecord.date >= month_start,
@@ -231,7 +273,7 @@ def _cost_for(org_id: int) -> dict:
             'monthly_spend': round(current_month_spend, 2),
             'by_service': {k: round(v, 2) for k, v in by_service.items()},
             'by_day': {k: round(v, 2) for k, v in sorted(by_day.items())},
-            'projected_month_end': round(current_month_spend / max(1, today.day) * 30, 2),
+            'projected_month_end': round(current_month_spend / max(1, today.day) * days_in_month, 2),
             'budgets': budget_status,
             'budget_count': len(budget_status),
             'over_budget_count': sum(1 for item in budget_status if item.get('alert_level') == 'critical'),
@@ -351,6 +393,112 @@ def _telemetry_for(org_id: int) -> dict:
     }
 
 
+def _operational_feed_for(org_id: int, snapshot: dict | None = None) -> dict:
+    """Build a compact cause → impact → recovery feed for the dashboard."""
+    snapshot = snapshot or {}
+    try:
+        from app.services.event_bus import (
+            event_bus,
+            EVENT_METRIC_UPDATE,
+            EVENT_SCALING_DECISION,
+            EVENT_WORKLOAD_UPDATE,
+        )
+
+        recent_events = event_bus.recent(org_id, limit=15)
+    except Exception:
+        recent_events = []
+
+    recent_events = sorted(recent_events, key=lambda item: item.get('timestamp') or 0)
+
+    chains: list[dict] = []
+    current_chain: dict | None = None
+
+    def _new_chain(seed_event: dict) -> dict:
+        return {
+            'cause': None,
+            'impact': None,
+            'recovery': None,
+            'status': 'steady',
+            'summary': '',
+            'events': [seed_event],
+        }
+
+    for event in recent_events:
+        event_type = event.get('type')
+        if event_type == EVENT_WORKLOAD_UPDATE:
+            if current_chain and (current_chain.get('cause') or current_chain.get('impact') or current_chain.get('recovery')):
+                chains.append(current_chain)
+            current_chain = _new_chain(event)
+            current_chain['cause'] = {
+                'type': 'workload_update',
+                'title': 'Workload changed',
+                'details': event.get('payload', {}),
+                'timestamp': event.get('timestamp'),
+            }
+        elif event_type == EVENT_METRIC_UPDATE:
+            if current_chain is None:
+                current_chain = _new_chain(event)
+            current_chain['impact'] = {
+                'type': 'metric_update',
+                'title': 'Metrics shifted',
+                'details': event.get('payload', {}),
+                'timestamp': event.get('timestamp'),
+            }
+            current_chain['status'] = 'under_pressure'
+        elif event_type == EVENT_SCALING_DECISION:
+            if current_chain is None:
+                current_chain = _new_chain(event)
+            action = (event.get('payload') or {}).get('action', {})
+            current_chain['recovery'] = {
+                'type': 'scaling_decision',
+                'title': action.get('type', 'scaling_decision').replace('_', ' ').title(),
+                'details': action,
+                'timestamp': event.get('timestamp'),
+            }
+            current_chain['status'] = 'recovering' if action.get('type') in {'scale_up', 'scale_down'} else 'steady'
+            current_chain['summary'] = action.get('reason', '')
+            chains.append(current_chain)
+            current_chain = None
+
+    if current_chain and (current_chain.get('cause') or current_chain.get('impact') or current_chain.get('recovery')):
+        if not current_chain.get('summary'):
+            current_chain['summary'] = 'No recovery action has been published yet.'
+        chains.append(current_chain)
+
+    if not chains:
+        current_queue = float(snapshot.get('workload', {}).get('queue_total_ms', 0) or 0)
+        current_bpi = float(snapshot.get('bpi', 0) or 0)
+        current_target = float(snapshot.get('target_bpi', 0) or 0)
+        chains = [{
+            'cause': {
+                'type': 'snapshot',
+                'title': 'Snapshot refreshed',
+                'details': {'queue_total_ms': current_queue, 'bpi': current_bpi},
+                'timestamp': snapshot.get('timestamp'),
+            },
+            'impact': {
+                'type': 'snapshot',
+                'title': 'Current workload state',
+                'details': {
+                    'queue_total_ms': current_queue,
+                    'bpi': current_bpi,
+                    'target_bpi': current_target,
+                },
+                'timestamp': snapshot.get('timestamp'),
+            },
+            'recovery': None,
+            'status': 'steady',
+            'summary': 'Snapshot is healthy and ready for the next control-plane tick.',
+            'events': [],
+        }]
+
+    return {
+        'recent_events': recent_events[-10:],
+        'chains': chains[-5:],
+        'freshness_seconds': 0.0,
+    }
+
+
 def get_org_snapshot(org_id: int, use_cache: bool = True) -> dict:
     """Return the latest computed snapshot for an org.
 
@@ -362,8 +510,32 @@ def get_org_snapshot(org_id: int, use_cache: bool = True) -> dict:
         with _cache_lock:
             cached = _snapshot_cache.get(org_id)
             if cached is not None:
-                return cached
-    return _compute_org_snapshot(org_id)
+                snapshot = dict(cached)
+            else:
+                snapshot = _compute_org_snapshot(org_id)
+    else:
+        snapshot = _compute_org_snapshot(org_id)
+
+    timestamp = float(snapshot.get('timestamp') or time.time())
+    snapshot_age_seconds = max(0.0, round(time.time() - timestamp, 3))
+    snapshot['snapshot_timestamp'] = timestamp
+    snapshot['snapshot_age_seconds'] = snapshot_age_seconds
+    snapshot['snapshot_fresh'] = snapshot_age_seconds <= (_cache_ttl * 2)
+    snapshot['operational_feed'] = _operational_feed_for(org_id, snapshot)
+    snapshot['operational_feed']['freshness_seconds'] = snapshot_age_seconds
+    topology_mini_map = snapshot.get('topology_mini_map')
+    if isinstance(topology_mini_map, dict):
+        topology_mini_map['freshness_seconds'] = snapshot_age_seconds
+        topology_mini_map['fresh'] = snapshot_age_seconds <= (_cache_ttl * 2)
+    cost_performance = snapshot.get('cost_performance')
+    if isinstance(cost_performance, dict):
+        cost_performance['freshness_seconds'] = snapshot_age_seconds
+        cost_performance['fresh'] = snapshot_age_seconds <= (_cache_ttl * 2)
+    operational_insights = snapshot.get('operational_insights')
+    if isinstance(operational_insights, dict):
+        operational_insights['freshness_seconds'] = snapshot_age_seconds
+        operational_insights['fresh'] = snapshot_age_seconds <= (_cache_ttl * 2)
+    return snapshot
 
 
 def _compute_org_snapshot(org_id: int) -> dict:
@@ -685,28 +857,29 @@ def _compute_org_snapshot(org_id: int) -> dict:
                         db.session.rollback()
                         break
 
-                state["capacity"] = state["capacity"] + created
-                reason = (
-                    f"BPI={bpi:.1f} > target={target_bpi:.1f} — "
-                    f"queue={queue_total_ms:.0f}ms, p95={p95_latency_ms:.0f}ms, "
-                    f"drops={dropped_total}, +{created} instance(s) created"
-                )
-                print(
-                    f"[CONTROL_PLANE:SCALE_OUT] org={org_id} "
-                    f"created={created} decision=bpi_exceeded "
-                    f"bpi={bpi:.2f}>target={target_bpi:.2f} "
-                    f"queue={queue_total_ms:.0f}ms new_capacity={state['capacity']}/{_GLOBAL_MAX_VMS}"
-                )
-                actions.append({
-                    "type": "scale_up",
-                    "capacity": state["capacity"],
-                    "bpi": round(bpi, 2),
-                    "target_bpi": round(target_bpi, 2),
-                    "created": created,
-                    "reason": reason,
-                })
-                state["last_action_time"] = current_time
-                action_taken = True
+                if created > 0:
+                    state["capacity"] = state["capacity"] + created
+                    reason = (
+                        f"BPI={bpi:.1f} > target={target_bpi:.1f} — "
+                        f"queue={queue_total_ms:.0f}ms, p95={p95_latency_ms:.0f}ms, "
+                        f"drops={dropped_total}, +{created} instance(s) created"
+                    )
+                    print(
+                        f"[CONTROL_PLANE:SCALE_OUT] org={org_id} "
+                        f"created={created} decision=bpi_exceeded "
+                        f"bpi={bpi:.2f}>target={target_bpi:.2f} "
+                        f"queue={queue_total_ms:.0f}ms new_capacity={state['capacity']}/{_GLOBAL_MAX_VMS}"
+                    )
+                    actions.append({
+                        "type": "scale_up",
+                        "capacity": state["capacity"],
+                        "bpi": round(bpi, 2),
+                        "target_bpi": round(target_bpi, 2),
+                        "created": created,
+                        "reason": reason,
+                    })
+                    state["last_action_time"] = current_time
+                    action_taken = True
 
             elif (
                 bpi < target_bpi * _SCALE_IN_BPI_RATIO
@@ -720,27 +893,26 @@ def _compute_org_snapshot(org_id: int) -> dict:
                 terminated = _terminate_autoscale_vm(org_id)
                 if terminated:
                     state["capacity"] -= 1
-                reason = (
-                    f"BPI={bpi:.1f} < target×0.7={target_bpi * _SCALE_IN_BPI_RATIO:.1f} — "
-                    f"queue stable, latency/drops OK"
-                    + (" — 1 instance terminated" if terminated else " — no autoscale VM to terminate")
-                )
-                print(
-                    f"[CONTROL_PLANE:SCALE_IN] org={org_id} "
-                    f"terminated={terminated} decision=bpi_below_threshold "
-                    f"bpi={bpi:.2f}<target*0.7={target_bpi * _SCALE_IN_BPI_RATIO:.2f} "
-                    f"new_capacity={state['capacity']}/{_GLOBAL_MAX_VMS}"
-                )
-                actions.append({
-                    "type": "scale_down",
-                    "capacity": state["capacity"],
-                    "bpi": round(bpi, 2),
-                    "target_bpi": round(target_bpi, 2),
-                    "terminated": terminated,
-                    "reason": reason,
-                })
-                state["last_action_time"] = current_time
-                action_taken = True
+                    reason = (
+                        f"BPI={bpi:.1f} < target×0.7={target_bpi * _SCALE_IN_BPI_RATIO:.1f} — "
+                        f"queue stable, latency/drops OK — 1 instance terminated"
+                    )
+                    print(
+                        f"[CONTROL_PLANE:SCALE_IN] org={org_id} "
+                        f"terminated={terminated} decision=bpi_below_threshold "
+                        f"bpi={bpi:.2f}<target*0.7={target_bpi * _SCALE_IN_BPI_RATIO:.2f} "
+                        f"new_capacity={state['capacity']}/{_GLOBAL_MAX_VMS}"
+                    )
+                    actions.append({
+                        "type": "scale_down",
+                        "capacity": state["capacity"],
+                        "bpi": round(bpi, 2),
+                        "target_bpi": round(target_bpi, 2),
+                        "terminated": terminated,
+                        "reason": reason,
+                    })
+                    state["last_action_time"] = current_time
+                    action_taken = True
 
             # Publish scaling_decision event for observability.
             if action_taken:
@@ -756,6 +928,14 @@ def _compute_org_snapshot(org_id: int) -> dict:
         
         scaling_state[org_id] = state
         capacity = state["capacity"]
+        if actions:
+            refreshed_vms = VirtualMachine.query.filter_by(
+                organization_id=org_id,
+            ).filter(VirtualMachine.status != ResourceStatus.TERMINATED).all()
+            total_vms = len(refreshed_vms)
+            running_vms = [vm for vm in refreshed_vms if vm.status == ResourceStatus.RUNNING]
+            running_vms_count = len(running_vms)
+            current_hourly_cost = sum(float(vm.hourly_rate or 0) for vm in running_vms)
         
         # Build learning explanation based on actions
         if actions:
@@ -883,7 +1063,7 @@ def _compute_org_snapshot(org_id: int) -> dict:
         }
     
     # Module 3/4: attach workload snapshot + topology without removing keys.
-    workload_block = _workload_snapshot_for(org_id) if running_vms_count else {}
+    workload_block = _workload_snapshot_for(org_id)
     topology_block = _topology_for(org_id)
     security_block = _security_for(org_id)
     cost_block = _cost_for(org_id)
@@ -898,7 +1078,9 @@ def _compute_org_snapshot(org_id: int) -> dict:
     monthly_spend = cost_block.get('monthly_spend', 0.0)
     budgets = cost_block.get('budgets', [])
 
-    return {
+    snapshot = {
+        'org_id': org_id,
+        'organization_id': org_id,
         'total_vms': total_vms,
         'running_vms': running_vms_count,
         'cpu_avg': round(cpu_avg, 2),
@@ -949,10 +1131,82 @@ def _compute_org_snapshot(org_id: int) -> dict:
         'monthly_spend': monthly_spend,
         'budgets': budgets,
         'current_hourly_cost': round(current_hourly_cost, 4),
-        'cost_trend': [],
-        'utilization_trend': [],
-        'recent_activity': [],
     }
+
+    try:
+        from app.services.operational_insights_engine import operational_insights_engine
+        from app.services.topology_mini_map import build_topology_mini_map
+        from app.services.cost_performance_engine import analyze_cost_performance
+
+        snapshot['operational_insights'] = operational_insights_engine.generate(snapshot, org_id=org_id)
+        snapshot['topology_mini_map'] = build_topology_mini_map(org_id, snapshot)
+        snapshot['cost_performance'] = analyze_cost_performance(org_id, snapshot)
+    except Exception:
+        snapshot['operational_insights'] = {
+            'org_id': org_id,
+            'fresh': True,
+            'freshness_seconds': 0.0,
+            'summary': {
+                'severity': 'info',
+                'title': 'Operational insights unavailable',
+                'message': 'Insight generation is temporarily unavailable.',
+                'recommended_actions': ['Retry on the next control-plane tick.'],
+            },
+            'insight_count': 0,
+            'insights': [],
+        }
+        snapshot['topology_mini_map'] = {
+            'org_id': org_id,
+            'fresh': True,
+            'freshness_seconds': 0.0,
+            'summary': {
+                'node_count': 0,
+                'edge_count': 0,
+                'vm_count': 0,
+                'database_count': 0,
+                'security_group_count': 0,
+                'active_threats': 0,
+                'unhealthy_node_count': 0,
+                'health': 'green',
+            },
+            'nodes': [],
+            'edges': [],
+            'unhealthy_node_ids': [],
+            'active_threat_overlays': [],
+            'scaling': {
+                'direction': 'steady',
+                'desired_capacity': snapshot.get('capacity', 0),
+                'running_capacity': snapshot.get('running_capacity', 0),
+                'bpi': snapshot.get('bpi', 0),
+                'target_bpi': snapshot.get('target_bpi', 0),
+            },
+        }
+        snapshot['cost_performance'] = {
+            'org_id': org_id,
+            'fresh': True,
+            'freshness_seconds': 0.0,
+            'summary': {
+                'efficiency_score': 100.0,
+                'cost_pressure_score': 0.0,
+                'underutilized_count': 0,
+                'overspending_count': 0,
+                'resource_count': 0,
+                'utilization_cost_correlation': 0.0,
+                'average_utilization': 0.0,
+                'average_hourly_rate': 0.0,
+                'current_hourly_cost': 0.0,
+                'potential_monthly_savings': 0.0,
+                'potential_monthly_savings_pct': 0.0,
+                'top_recommendation': 'No running resources detected.',
+            },
+            'underutilized_resources': [],
+            'overspending_resources': [],
+            'recommendations': [],
+            'trend': [],
+            'resources': [],
+        }
+
+    return snapshot
 
 
 def run_control_plane_loop():

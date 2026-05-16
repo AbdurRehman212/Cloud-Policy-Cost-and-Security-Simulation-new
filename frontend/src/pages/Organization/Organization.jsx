@@ -5,7 +5,7 @@ import axios from "axios";
 import toast from "react-hot-toast";
 import { fetchOrganizations } from "../../store/slices/organizationSlice";
 
-const API_URL = process.env.REACT_APP_API_URL || "http://localhost:5000/api";
+const API_URL = process.env.REACT_APP_API_URL || "/api";
 
 const ROLE_BADGE = {
   owner: "bg-purple-100 text-purple-800 dark:bg-purple-900/30 dark:text-purple-300",

@@ -1,10 +1,13 @@
-from flask import Blueprint, request, jsonify
+import calendar
+from datetime import datetime, timedelta
+
+import pandas as pd
+from flask import Blueprint, jsonify, request
 from flask_jwt_extended import jwt_required, get_jwt_identity
+
 from app import db
 from app.models.cost import CostRecord, Budget, CostForecast
 from app.models.organization import OrganizationMember
-from datetime import datetime, timedelta
-import pandas as pd
 
 try:
     from app.ai_models.cost_forecaster import cost_forecaster
@@ -12,6 +15,66 @@ except ImportError:
     cost_forecaster = None
 
 cost_bp = Blueprint('cost', __name__)
+
+
+def _days_in_month(day):
+    return calendar.monthrange(day.year, day.month)[1]
+
+
+def _projected_month_end(total, day):
+    if day.day <= 0:
+        return 0.0
+    return round((float(total or 0.0) / day.day) * _days_in_month(day), 2)
+
+
+def _resolve_org_id():
+    return request.args.get('organization_id', type=int) or request.args.get('org_id', type=int)
+
+
+def _require_org_membership(user_id, org_id):
+    if org_id is None:
+        return None
+    return OrganizationMember.query.filter_by(organization_id=org_id, user_id=user_id).first()
+
+
+def _budget_status_for_org(org_id):
+    budgets = Budget.query.filter_by(organization_id=org_id, is_active=True).all()
+    budget_status = []
+    for budget in budgets:
+        status = budget.to_dict()
+        status['alert_level'] = 'normal'
+        if status['percentage_used'] > 100:
+            status['alert_level'] = 'critical'
+        elif status['percentage_used'] > 80:
+            status['alert_level'] = 'warning'
+        budget_status.append(status)
+    return budget_status
+
+
+def _serialize_current_costs(org_id, today, total, by_service, by_day):
+    budget_status = _budget_status_for_org(org_id)
+    projected_month_end = _projected_month_end(total, today)
+
+    return {
+        'org_id': org_id,
+        'organization_id': org_id,
+        'current_month': {
+            'total': round(total, 2),
+            'by_service': {k: round(v, 2) for k, v in by_service.items()},
+            'by_day': {k: round(v, 2) for k, v in sorted(by_day.items())},
+            'projected_month_end': projected_month_end,
+        },
+        'costs': {
+            'current_month_spend': round(total, 2),
+            'monthly_spend': round(total, 2),
+            'by_service': {k: round(v, 2) for k, v in by_service.items()},
+            'by_day': {k: round(v, 2) for k, v in sorted(by_day.items())},
+            'projected_month_end': projected_month_end,
+            'budgets': budget_status,
+            'budget_count': len(budget_status),
+            'over_budget_count': sum(1 for item in budget_status if item.get('alert_level') == 'critical'),
+        },
+    }
 
 
 def fallback_forecast(df, days_ahead):
@@ -54,12 +117,12 @@ def fallback_wastage(vm_data):
 def get_current_costs():
     """Get current cost breakdown."""
     user_id = get_jwt_identity()
-    org_id = request.args.get('organization_id', type=int)
-    member = OrganizationMember.query.filter_by(organization_id=org_id, user_id=user_id).first()
+    org_id = _resolve_org_id()
+    member = _require_org_membership(user_id, org_id)
     if not member:
         return jsonify({'error': 'Access denied'}), 403
     # Get current month costs
-    today = datetime.now()
+    today = datetime.utcnow()
     month_start = today.replace(day=1, hour=0, minute=0, second=0)
     costs = CostRecord.query.filter(
         CostRecord.organization_id == org_id,
@@ -71,22 +134,17 @@ def get_current_costs():
     for c in costs:
         by_service[c.resource_type] = by_service.get(c.resource_type, 0) + c.total_cost
         by_day[str(c.date)] = by_day.get(str(c.date), 0) + c.total_cost
-    return jsonify({
-        'current_month': {
-            'total': round(total, 2),
-            'by_service': {k: round(v, 2) for k, v in by_service.items()},
-            'by_day': {k: round(v, 2) for k, v in sorted(by_day.items())},
-            'projected_month_end': round(total / today.day * 30, 2) if today.day > 0 else 0
-        }
-    }), 200
+    return jsonify(_serialize_current_costs(org_id, today, total, by_service, by_day)), 200
+
+
 @cost_bp.route('/forecast', methods=['GET'])
 @jwt_required()
 def get_forecast():
     """Get AI-powered cost forecast."""
     user_id = get_jwt_identity()
-    org_id = request.args.get('organization_id', type=int)
+    org_id = _resolve_org_id()
     days = request.args.get('days', 30, type=int)
-    member = OrganizationMember.query.filter_by(organization_id=org_id, user_id=user_id).first()
+    member = _require_org_membership(user_id, org_id)
     if not member:
         return jsonify({'error': 'Access denied'}), 403
     # Get historical data
@@ -118,17 +176,21 @@ def get_forecast():
         db.session.add(cf)
     db.session.commit()
     return jsonify({
+        'org_id': org_id,
+        'organization_id': org_id,
         'forecast': forecast,
         'total_predicted': round(sum(f['predicted_cost'] for f in forecast), 2)
     }), 200
+
+
 @cost_bp.route('/budgets', methods=['POST'])
 @jwt_required()
 def create_budget():
     """Create budget."""
     user_id = get_jwt_identity()
     data = request.get_json()
-    org_id = data.get('organization_id')
-    member = OrganizationMember.query.filter_by(organization_id=org_id, user_id=user_id).first()
+    org_id = data.get('organization_id') or data.get('org_id')
+    member = _require_org_membership(user_id, org_id)
     if not member or member.role not in ['admin', 'owner']:
         return jsonify({'error': 'Insufficient permissions'}), 403
     budget = Budget(
@@ -146,28 +208,36 @@ def create_budget():
     db.session.commit()
     return jsonify({
         'message': 'Budget created',
+        'org_id': org_id,
+        'organization_id': org_id,
         'budget': budget.to_dict()
     }), 201
+
+
 @cost_bp.route('/budgets', methods=['GET'])
 @jwt_required()
 def get_budgets():
     """List budgets."""
     user_id = get_jwt_identity()
-    org_id = request.args.get('organization_id', type=int)
-    member = OrganizationMember.query.filter_by(organization_id=org_id, user_id=user_id).first()
+    org_id = _resolve_org_id()
+    member = _require_org_membership(user_id, org_id)
     if not member:
         return jsonify({'error': 'Access denied'}), 403
     budgets = Budget.query.filter_by(organization_id=org_id, is_active=True).all()
     return jsonify({
+        'org_id': org_id,
+        'organization_id': org_id,
         'budgets': [b.to_dict() for b in budgets]
     }), 200
+
+
 @cost_bp.route('/optimization', methods=['GET'])
 @jwt_required()
 def get_optimization_recommendations():
     """Get cost optimization recommendations."""
     user_id = get_jwt_identity()
-    org_id = request.args.get('organization_id', type=int)
-    member = OrganizationMember.query.filter_by(organization_id=org_id, user_id=user_id).first()
+    org_id = _resolve_org_id()
+    member = _require_org_membership(user_id, org_id)
     if not member:
         return jsonify({'error': 'Access denied'}), 403
     # Get resource utilization data
@@ -202,6 +272,8 @@ def get_optimization_recommendations():
     insights = cost_forecaster.detect_wastage(vm_data) if cost_forecaster else fallback_wastage(vm_data)
     total_potential_savings = sum(i['potential_monthly_savings'] for i in insights)
     return jsonify({
+        'org_id': org_id,
+        'organization_id': org_id,
         'recommendations': insights,
         'total_potential_monthly_savings': round(total_potential_savings, 2),
         'recommendation_count': len(insights)

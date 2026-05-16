@@ -1,12 +1,14 @@
 import React, { useState, useEffect } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { useDispatch, useSelector } from 'react-redux';
 import { register, clearError } from '../../store/slices/authSlice';
 import toast from 'react-hot-toast';
 const Register = () => {
   const dispatch = useDispatch();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const { loading, error } = useSelector((state) => state.auth);
+  const redirectTarget = searchParams.get('redirect');
   const [formData, setFormData] = useState({
     first_name: '',
     last_name: '',
@@ -33,7 +35,11 @@ const Register = () => {
     const result = await dispatch(register(formData));
     if (result.meta.requestStatus === 'fulfilled') {
       toast.success('Registration successful! You can now sign in.');
-      navigate('/login');
+      navigate(
+        redirectTarget
+          ? `/login?redirect=${encodeURIComponent(redirectTarget)}`
+          : '/login'
+      );
     }
   };
   return (

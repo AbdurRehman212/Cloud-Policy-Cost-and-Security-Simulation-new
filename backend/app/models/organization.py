@@ -106,10 +106,10 @@ def ensure_default_organization_membership(user):
             existing_membership.role = 'owner'
         return existing_membership.organization, existing_membership, False
 
-    org_name = f"{(user.first_name or 'Demo').strip()} Demo Organization"
+    org_name = f"{(user.first_name or 'User').strip()}'s Cloud Workspace"
     organization = Organization(
         name=org_name,
-        description='Auto-created default organization for demo onboarding.',
+        description='Personal cloud workspace for learning infrastructure management.',
         owner_id=user.id,
         billing_email=user.email,
         max_resources=100,

@@ -1,13 +1,15 @@
 import axios from 'axios';
 import { io } from 'socket.io-client';
 
+// Legacy compatibility API.
+// The real dashboard now reads from /api/dashboard/summary and the control-plane
+// snapshot cache; keep this module only for older callers that have not been removed yet.
+
 const apiClient = axios.create({
   baseURL: process.env.REACT_APP_API_URL || '/api',
 });
 
-const SOCKET_URL =
-  process.env.REACT_APP_SOCKET_URL ||
-  (process.env.NODE_ENV === 'development' ? 'http://localhost:5000' : undefined);
+const SOCKET_URL = process.env.REACT_APP_SOCKET_URL;
 
 const unwrapResponse = (response) => {
   const payload = response.data;

@@ -1,15 +1,9 @@
 from flask import Blueprint, jsonify, request, current_app
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from app.models.organization import OrganizationMember
-from app.models.governance import Policy
-from app.models.progress import UserProgress
 from app.models.resources import VirtualMachine, Database, ResourceStatus
-from app.models.security import ThreatDetection, ThreatSeverity
-from app.models.cost import CostRecord, Budget
-from app.models.user import User
 from app.services import control_plane
-from app.services.learning_engine import build_learning_profile, explain_metric_change
-from datetime import datetime, timedelta
+from datetime import datetime
 import time
 dashboard_bp = Blueprint('dashboard', __name__)
 @dashboard_bp.route('/summary', methods=['GET'])
@@ -19,150 +13,39 @@ def get_dashboard_summary():
     t0 = time.time()
     user_id = get_jwt_identity()
     org_id = request.args.get('organization_id', type=int)
-    use_resource_metrics = (request.args.get('use_resource_metrics', '') or '').strip().lower() in {'1', 'true', 'yes'}
     member = OrganizationMember.query.filter_by(organization_id=org_id, user_id=user_id).first()
     if not member:
         return jsonify({'error': 'Access denied'}), 403
-    # Resource counts
-    total_vms = VirtualMachine.query.filter_by(
-        organization_id=org_id,
-    ).filter(VirtualMachine.status != ResourceStatus.TERMINATED).count()
-    running_vms = VirtualMachine.query.filter_by(
-        organization_id=org_id,
-        status=ResourceStatus.RUNNING
-    ).count()
-    total_dbs = Database.query.filter_by(organization_id=org_id).count()
-    running_dbs = Database.query.filter_by(
-        organization_id=org_id,
-        status=ResourceStatus.RUNNING
-    ).count()
-    # Security status
-    active_threats = ThreatDetection.query.filter_by(
-        organization_id=org_id,
-        status='active'
-    ).count()
-    # Cost status
-    today = datetime.now()
-    month_start = today.replace(day=1)
-    month_costs = CostRecord.query.filter(
-        CostRecord.organization_id == org_id,
-        CostRecord.date >= month_start.date()
-    ).all()
-    current_spend = sum(c.total_cost for c in month_costs)
-    # Budget status
-    budgets = Budget.query.filter_by(organization_id=org_id, is_active=True).all()
-    
-    # Security score: 100 - (critical*20 + high*10 + medium*5)
-    threats = ThreatDetection.query.filter_by(organization_id=org_id, status='active').all()
-    critical_count = sum(1 for t in threats if t.severity == ThreatSeverity.CRITICAL)
-    high_count = sum(1 for t in threats if t.severity == ThreatSeverity.HIGH)
-    medium_count = sum(1 for t in threats if t.severity == ThreatSeverity.MEDIUM)
-    security_score = max(0, min(100, 100 - (critical_count * 20 + high_count * 10 + medium_count * 5)))
-    
-    # Compliance score: (passed / total) * 100, or 100 if no records
-    try:
-        from app.models.governance import ComplianceCheck
-        compliance_checks = ComplianceCheck.query.join(
-            ComplianceCheck.policy
-        ).filter(
-            Policy.organization_id == org_id
-        ).all()
-        if compliance_checks:
-            passed_count = sum(1 for c in compliance_checks if c.status == 'passed')
-            compliance_score = int((passed_count / len(compliance_checks)) * 100)
-        else:
-            compliance_score = 100
-    except (ImportError, AttributeError):
-        compliance_score = 100
-    
-    # Utilization score: avg CPU of running VMs, 100 if no VMs
-    running_vms_for_util = VirtualMachine.query.filter_by(
-        organization_id=org_id, status=ResourceStatus.RUNNING
-    ).all()
-    if running_vms_for_util:
-        avg_cpu_util = sum(float(vm.cpu_utilization or 0) for vm in running_vms_for_util) / len(running_vms_for_util)
-        utilization_score = min(100, avg_cpu_util)
-    else:
-        utilization_score = 100
-    
-    # Health score: (security * 0.4) + (compliance * 0.4) + (utilization * 0.2)
-    health_score_calculated = int((security_score * 0.4) + (compliance_score * 0.4) + (utilization_score * 0.2))
-    
-    # Monthly spend
-    monthly_spend = current_spend
-    
-    budget_status = []
-    for b in budgets:
-        status = b.to_dict()
-        status['alert_level'] = 'normal'
-        if status['percentage_used'] > 100:
-            status['alert_level'] = 'critical'
-        elif status['percentage_used'] > 80:
-            status['alert_level'] = 'warning'
-        budget_status.append(status)
-    # Recent activity (last 24 hours)
-    yesterday = today - timedelta(days=1)
-    # TASK 3: Read simulator snapshot from control-plane cache (updated every 2 s
-    # by background task).  Never recompute inside the request handler.
-    # use_cache=True is the default so this returns instantly from memory.
-    sim_snapshot_data = control_plane.get_org_snapshot(org_id, use_cache=True)
-    simulator_snapshot = sim_snapshot_data
-
-    if use_resource_metrics:
-        # Read live utilization directly from the DB models
-        running_vms_objs = VirtualMachine.query.filter_by(
-            organization_id=org_id, status=ResourceStatus.RUNNING
-        ).all()
-        running_dbs_objs = Database.query.filter_by(
-            organization_id=org_id, status=ResourceStatus.RUNNING
-        ).all()
-        all_running = running_vms_objs + running_dbs_objs
-        avg_cpu = (
-            sum(float(r.cpu_utilization or 0) for r in all_running) / len(all_running)
-            if all_running else 0.0
-        )
-        avg_memory = (
-            sum(float(r.memory_utilization or 0) for r in running_vms_objs) / len(running_vms_objs)
-            if running_vms_objs else 0.0
-        )
-        total_vms = VirtualMachine.query.filter(
-            VirtualMachine.organization_id == org_id,
-            VirtualMachine.status != ResourceStatus.TERMINATED,
-        ).count()
-        running_vms = len(running_vms_objs)
-        total_dbs = Database.query.filter(
-            Database.organization_id == org_id,
-            Database.status != ResourceStatus.TERMINATED,
-        ).count()
-        running_dbs = len(running_dbs_objs)
-        simulator_snapshot = {
-            **simulator_snapshot,
-            'utilization_trend': [{
-                'timestamp': datetime.utcnow().isoformat(),
-                'cpu_avg': round(avg_cpu, 2),
-                'memory_avg': round(avg_memory, 2),
-            }],
-        }
-
-    sim_data = sim_snapshot_data
+    sim_data = control_plane.get_org_snapshot(org_id, use_cache=True)
+    snapshot_resources = sim_data.get('resources', {})
     snapshot_security = sim_data.get('security', {})
     snapshot_costs = sim_data.get('costs', {})
     snapshot_governance = sim_data.get('governance', {})
+    workload = sim_data.get('workload', {})
+    total_vms = sim_data.get('total_vms', snapshot_resources.get('vms', {}).get('total', 0))
+    running_vms = sim_data.get('running_vms', snapshot_resources.get('vms', {}).get('running', 0))
+    total_dbs = snapshot_resources.get('databases', {}).get('total', 0)
+    running_dbs = snapshot_resources.get('databases', {}).get('running', 0)
+    active_threats = snapshot_security.get('active_threats', 0)
+    security_score = snapshot_security.get('security_score', 100)
+    current_spend = snapshot_costs.get('current_month_spend', 0.0)
+    monthly_spend = snapshot_costs.get('monthly_spend', 0.0)
+    budgets = snapshot_costs.get('budgets', [])
+    compliance_score = snapshot_governance.get('compliance_score', 100)
+    utilization_score = sim_data.get('utilization_score', 100)
+    health_score_calculated = sim_data.get('health_score_calculated')
+    if health_score_calculated is None:
+        health_score_calculated = int((security_score * 0.4) + (compliance_score * 0.4) + (utilization_score * 0.2))
 
-    active_threats = snapshot_security.get('active_threats', active_threats)
-    security_score = snapshot_security.get('security_score', security_score)
-    current_spend = snapshot_costs.get('current_month_spend', current_spend)
-    monthly_spend = snapshot_costs.get('monthly_spend', monthly_spend)
-    budgets = snapshot_costs.get('budgets', budget_status)
-    compliance_score = snapshot_governance.get('compliance_score', compliance_score)
-
-    total_vms = sim_data.get('total_vms', total_vms)
-    running_vms = sim_data.get('running_vms', running_vms)
-
-    user = User.query.get(user_id)
-    progress = UserProgress.query.filter_by(user_id=user_id, org_id=org_id).first()
-    learning_profile = build_learning_profile(user=user, membership=member, progress=progress, snapshot=sim_data)
-    learning_explanation = explain_metric_change(learning_profile.get('recommended_scenario') or {}, sim_data)
+    budget_status = []
+    for b in budgets:
+        status = dict(b)
+        status['alert_level'] = 'normal'
+        if status.get('percentage_used', 0) > 100:
+            status['alert_level'] = 'critical'
+        elif status.get('percentage_used', 0) > 80:
+            status['alert_level'] = 'warning'
+        budget_status.append(status)
 
     # TASK 6: Log API response time for performance monitoring.
     response_ms = round((time.time() - t0) * 1000, 1)
@@ -174,7 +57,6 @@ def get_dashboard_summary():
     print(f"[PERF] /api/dashboard/summary response time: {response_ms} ms")
 
     # Extract causal metrics for learning feedback
-    workload = sim_data.get('workload', {})
     q_ms = workload.get('queue_total_ms', 0)
     rps = workload.get('requests_per_second', 0)
     capacity = sim_data.get('capacity', 1)
@@ -194,10 +76,12 @@ def get_dashboard_summary():
         res_act = "Monitor load trends to ensure you are not over-provisioned."
 
     return jsonify({
+        'org_id': org_id,
+        'organization_id': org_id,
         'resources': {
             'vms': {
                 'total': total_vms,
-                'running': simulator_snapshot.get('running_vm_count', running_vms)
+                'running': running_vms
             },
             'databases': {'total': total_dbs, 'running': running_dbs},
             'explanation': res_exp,
@@ -217,32 +101,16 @@ def get_dashboard_summary():
             'explanation': f"Current spend is ${round(current_spend, 2)}.",
             'actionable_suggestion': 'Create a budget to track spending against limits.' if not budgets else 'Check for unutilized resources.'
         },
-        'cost_trend': simulator_snapshot.get('cost_trend', []),
-        'utilization_trend': simulator_snapshot.get('utilization_trend', []),
-        'recent_activity': simulator_snapshot.get('recent_activity', []),
+        'cost_trend': sim_data.get('cost_trend', []),
+        'utilization_trend': sim_data.get('utilization_trend', []),
+        'recent_activity': sim_data.get('recent_activity', []),
         'security_score': security_score,
         'compliance_score': compliance_score,
         'utilization_score': utilization_score,
         'total_vms': total_vms,
         'running_vms': running_vms,
-        'health_score': calculate_health_score(
-            active_threats, running_vms, total_vms, current_spend, budgets
-        ),
+        'health_score': calculate_health_score(active_threats, running_vms, total_vms, current_spend, budget_status),
         'health_score_calculated': health_score_calculated,
-        'coaching': {
-            'utilization': {
-                'explanation': f"Average utilization score is {round(utilization_score, 1)}%.",
-                'actionable_suggestion': 'Scale in to improve efficiency.' if utilization_score < 40 else 'Scale out to prevent performance degradation.' if utilization_score > 80 else 'Good utilization balance.'
-            },
-            'compliance': {
-                'explanation': f"Compliance score is {compliance_score}/100.",
-                'actionable_suggestion': 'Review failed policy checks.' if compliance_score < 100 else 'System is fully compliant.'
-            },
-            'health': {
-                'explanation': f"Overall system health score is {health_score_calculated}/100.",
-                'actionable_suggestion': 'Check for failing metrics across security, utilization, or cost.' if health_score_calculated < 80 else 'System is performing optimally.'
-            }
-        },
         # Simulation data for E2E tests
         'cpu_avg': sim_data.get('cpu_avg', 0),
         'memory_avg': sim_data.get('memory_avg', 0),
@@ -255,13 +123,10 @@ def get_dashboard_summary():
         'alerts': sim_data.get('alerts', []),
         'actions': sim_data.get('actions', []),
         'alert_states': sim_data.get('alert_states', {}),
-        'learning_insight': sim_data.get('learning_insight', {}),
-        'learning_profile': learning_profile,
-        'learning_loop': learning_profile.get('learning_loop'),
-        'learning_role': learning_profile.get('role'),
-        'learning_level': learning_profile.get('level'),
-        'recommended_scenario': learning_profile.get('recommended_scenario'),
-        'learning_explanation': learning_explanation,
+        'snapshot_timestamp': sim_data.get('snapshot_timestamp', sim_data.get('timestamp')),
+        'snapshot_age_seconds': sim_data.get('snapshot_age_seconds', 0.0),
+        'snapshot_fresh': sim_data.get('snapshot_fresh', True),
+        'cost_performance': sim_data.get('cost_performance', {}),
         'timestamp': datetime.utcnow().timestamp()
     }), 200
 
@@ -327,4 +192,4 @@ def cost_by_resource():
             'instance_type': db_obj.instance_class,
         })
     items.sort(key=lambda item: item['cost'], reverse=True)
-    return jsonify({'items': items}), 200
+    return jsonify({'status': 'success', 'data': items}), 200

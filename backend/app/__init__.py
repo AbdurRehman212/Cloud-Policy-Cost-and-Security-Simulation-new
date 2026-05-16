@@ -94,11 +94,9 @@ def create_app(config_name='default'):
     from app.routes.learning import learning_bp
     from app.routes.scenarios import scenarios_bp
     from app.routes.membership import membership_bp
-    from app.routes.simulation_routes import simulation_bp
     from app.routes.progress import progress_bp
     from app.routes.admin import admin_bp
     app.register_blueprint(admin_bp, url_prefix='/api/admin')
-    app.register_blueprint(simulation_bp, url_prefix='/api')
     app.register_blueprint(auth_bp, url_prefix='/api/auth')
     app.register_blueprint(org_bp, url_prefix='/api/org')
     from app.routes.organization import simple_invite
@@ -115,73 +113,27 @@ def create_app(config_name='default'):
     app.register_blueprint(scenarios_bp, url_prefix='/api/scenarios')
     app.register_blueprint(membership_bp, url_prefix='/api/membership')
     app.register_blueprint(progress_bp, url_prefix='/api/progress')
+    from app.routes.learning_timeline import timeline_bp
+    app.register_blueprint(timeline_bp, url_prefix='/api/learning')
 
     # Create database tables
     with app.app_context():
         db.create_all()
 
         if not app.config.get('TESTING'):
-            # ── Startup sync: DB → VMRegistry ────────────────────────────────
-            # VMRegistry is the ONLY runtime state.  Seed it from all running
-            # VMs in the DB so the lifecycle state machine is active immediately.
-            def _seed_vm_registry():
-                from app.models.resources import VirtualMachine, Database, ResourceStatus
-                from app.services.simulation_core import vm_registry, orm_vm_to_simvm
-                from app import simulation_engine
-
-                vms = VirtualMachine.query.filter(
-                    VirtualMachine.status == ResourceStatus.RUNNING
-                ).all()
-                dbs = Database.query.filter(
-                    Database.status == ResourceStatus.RUNNING
-                ).all()
-
-                seeded = 0
-                for vm in vms:
-                    try:
-                        if vm_registry.get(vm.instance_id) is None:
-                            sim_vm = orm_vm_to_simvm(vm)
-                            vm_registry.register(sim_vm)
-                            # Also place on the engine's default host for quota tracking
-                            simulation_engine._default_host.vms.append(sim_vm)
-                            seeded += 1
-                    except Exception as exc:
-                        app.logger.warning(
-                            f'VMRegistry seed failed for vm {vm.instance_id}: {exc}'
-                        )
-
-                app.logger.info(
-                    f'Startup: seeded VMRegistry with {seeded}/{len(vms)} running VMs, '
-                    f'{len(dbs)} running DBs found'
-                )
-
-            try:
-                _seed_vm_registry()
-            except Exception as e:
-                app.logger.error(f"Failed to seed VM registry: {e}")
-
             # ── Control-plane snapshot cache (2-second refresh) ───────────────
             # Provides fast dashboard reads without blocking HTTP request threads
             # on heavy simulation computation.
             from app.services.control_plane import start_control_plane_loop
             start_control_plane_loop()
 
-            # ── SimulationEngine — CloudSim-style, context-per-org ────────────────
-            # The engine owns all simulation state. start() launches an idle
-            # sync thread. Per-org loops are started via start_scenario().
-            from app import simulation_engine
-            app.simulation_engine = simulation_engine
-            simulation_engine.start(app)
-            app.logger.info('SimulationEngine started (idle sync active)')
-
         if app.config.get('ENABLE_REALTIME_METRICS') and not app.config.get('TESTING'):
             from app.services.metrics_streamer import metrics_streamer
             metrics_streamer.start()
 
-        # Legacy ResourceSimulator — handles DES/ML telemetry, security analysis,
-        # and per-VM RPS history.  Autoscaling decisions have been migrated to
-        # SimulationEngine; ResourceSimulator's check_autoscaling is kept only
-        # for telemetry history continuity.
+        # ResourceSimulator — handles DES telemetry, ML security analysis,
+        # per-VM RPS history, and autoscaling.  This is the primary simulation
+        # thread; control_plane.py provides the MAPE loop and snapshot cache.
         if app.config.get('ENABLE_SIMULATION_THREADS') and not app.config.get('TESTING'):
             app.simulator.start(app)
 

@@ -1,10 +1,27 @@
 import os
 from datetime import timedelta
+from urllib.parse import urlsplit, urlunsplit
+
 from dotenv import load_dotenv
 
 load_dotenv(override=True)
 
 PG_URL = 'postgresql://abdur:admin123@localhost/cloud_simulator'
+
+
+def _normalize_base_url(url, fallback):
+    """Return a safe absolute base URL without a trailing slash."""
+    candidate = (url or fallback or '').strip()
+    if not candidate:
+        return ''
+
+    if '://' not in candidate:
+        candidate = f'https://{candidate}'
+
+    parsed = urlsplit(candidate)
+    path = (parsed.path or '').rstrip('/')
+    normalized = parsed._replace(path=path, query='', fragment='')
+    return urlunsplit(normalized)
 
 class Config:
     """Base configuration class."""
@@ -30,11 +47,15 @@ class Config:
     MAIL_USERNAME = os.environ.get('MAIL_USERNAME')
     MAIL_PASSWORD = os.environ.get('MAIL_PASSWORD')
     MAIL_DEFAULT_SENDER = os.environ.get('MAIL_DEFAULT_SENDER')
+    FRONTEND_BASE_URL = _normalize_base_url(
+        os.environ.get('FRONTEND_BASE_URL') or os.environ.get('PUBLIC_APP_URL'),
+        '',
+    )
     # AI/ML Settings
     MODEL_PATH = os.environ.get('MODEL_PATH') or './ai_training/models'
     DATASET_PATH = os.environ.get('DATASET_PATH') or './data'
     FINOPS_DATASET_PATH = os.environ.get('FINOPS_DATASET_PATH') or os.path.join(DATASET_PATH, 'finops')
-    SECURITY_DATASET_PATH = os.environ.get('SECURITY_DATASET_PATH') or os.path.join(DATASET_PATH, 'security')
+    SECURITY_DATASET_PATH = os.environ.get('SECURITY_DATASET_PATH') or os.path.join(DATASET_PATH, 'cicids_subset.csv')
     GOVERNANCE_DATASET_PATH = os.environ.get('GOVERNANCE_DATASET_PATH') or os.path.join(DATASET_PATH, 'governance')
     SIMULATOR_CORE_DATASET_PATH = os.environ.get('SIMULATOR_CORE_DATASET_PATH') or os.path.join(DATASET_PATH, 'simulator_core')
     # Simulation Settings

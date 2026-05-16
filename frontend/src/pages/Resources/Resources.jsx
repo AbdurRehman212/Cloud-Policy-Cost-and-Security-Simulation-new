@@ -7,7 +7,7 @@ import React, {
 } from "react";
 import { useSelector } from "react-redux";
 import axios from "axios";
-import { io } from "socket.io-client";
+import { createSocket } from "../../services/api";
 import LearningPanel from "../../components/Learning/LearningPanel";
 import {
   PlusIcon,
@@ -35,7 +35,7 @@ import {
   ReferenceLine,
 } from "recharts";
 
-const API_URL = process.env.REACT_APP_API_URL || "http://localhost:5000/api";
+const API_URL = process.env.REACT_APP_API_URL || "/api";
 
 const statusClass = (status) => {
   const normalized = (status || "").toLowerCase();
@@ -453,7 +453,7 @@ const VmDetailModal = ({
               </div>
               <div className="rounded-2xl border border-slate-800 bg-white/5 p-4 xl:col-span-2">
                 <p className="text-xs uppercase tracking-wide text-slate-400">Uptime</p>
-                <p className="mt-2 text-xl font-semibold text-white">{formatUptime(vm.created_at)}</p>
+                <p className="mt-2 text-xl font-semibold text-white">{formatUptime(vm.launched_at ?? vm.created_at)}</p>
               </div>
               <div className="rounded-2xl border border-slate-800 bg-white/5 p-4 xl:col-span-2">
                 <p className="text-xs uppercase tracking-wide text-slate-400">Total Cost Accrued</p>
@@ -908,8 +908,9 @@ const Resources = () => {
   const [learningActionKey, setLearningActionKey] = useState(null);
   const pollTimerRef = useRef(null);
   const fastPollUntilRef = useRef(0);
-  const cleanupRanRef = useRef(false);
+  const cleanedOrgIdRef = useRef(null);
   const socketRef = useRef(null);
+  const activeOrgIdRef = useRef(currentOrganization?.id ?? null);
 
   const authHeaders = useMemo(
     () => (token ? { Authorization: `Bearer ${token}` } : {}),
@@ -925,6 +926,10 @@ const Resources = () => {
     }
     return securityGroups.length > 0 ? [securityGroups[0].id] : [];
   }, [securityGroups]);
+
+  useEffect(() => {
+    activeOrgIdRef.current = currentOrganization?.id ?? null;
+  }, [currentOrganization?.id]);
 
   const loadResources = useCallback(
     async (cacheBust = Date.now()) => {
@@ -1036,43 +1041,74 @@ const Resources = () => {
   useEffect(() => {
     if (!token || !currentOrganization?.id) return undefined;
 
-    const socket = io("http://localhost:5000/metrics", {
-      transports: ["websocket"],
-      reconnectionAttempts: 5,
-    });
+    const socket = createSocket("/metrics");
+    if (!socket) return undefined;
+
     socketRef.current = socket;
 
-    socket.on("connect", () => {
-      socket.emit("join_room", { org_id: currentOrganization.id });
-    });
+    const handleConnect = () => {
+      const latestOrgId = activeOrgIdRef.current;
+      if (!latestOrgId) return;
+      socket.emit("join_room", { org_id: latestOrgId });
+    };
 
-    socket.on("autoscaling_event", () => {
-      toast.success("Auto Scaling: new VM provisioned due to high CPU");
-      loadResources(Date.now());
-      loadSecurityGroups(Date.now());
-    });
+    const handleVmCreated = (resource) => {
+      const latestOrgId = activeOrgIdRef.current;
+      const resourceOrgId = resource?.org_id ?? resource?.organization_id ?? null;
+      if (resourceOrgId !== null && resourceOrgId !== latestOrgId) return;
+      if (!resource?.id) return;
+      updateResourceInState(resource);
+    };
 
-    socket.on("waste_detected", (payload) => {
-      if (payload?.vm_id) {
-        setWasteCandidateVmIds((prev) =>
-          prev.includes(payload.vm_id) ? prev : [...prev, payload.vm_id],
-        );
-      }
-    });
+    const handleVmUpdated = (resource) => {
+      const latestOrgId = activeOrgIdRef.current;
+      const resourceOrgId = resource?.org_id ?? resource?.organization_id ?? null;
+      if (resourceOrgId !== null && resourceOrgId !== latestOrgId) return;
+      if (!resource?.id) return;
+      updateResourceInState(resource);
+    };
+
+    const handleVmDeleted = (resource) => {
+      const latestOrgId = activeOrgIdRef.current;
+      const resourceOrgId = resource?.org_id ?? resource?.organization_id ?? null;
+      if (resourceOrgId !== null && resourceOrgId !== latestOrgId) return;
+      const resourceId = resource?.id ?? resource?.instance_id ?? null;
+      if (!resourceId) return;
+      removeResourceFromState(resourceId);
+    };
+
+    socket.on("connect", handleConnect);
+    socket.on("vm_created", handleVmCreated);
+    socket.on("vm_updated", handleVmUpdated);
+    socket.on("vm_deleted", handleVmDeleted);
+    if (socket.connected) {
+      handleConnect();
+    }
 
     return () => {
-      socket.off("autoscaling_event");
-      socket.off("waste_detected");
-      socket.disconnect();
-      socket.close();
+      socket.off("connect", handleConnect);
+      socket.off("vm_created", handleVmCreated);
+      socket.off("vm_updated", handleVmUpdated);
+      socket.off("vm_deleted", handleVmDeleted);
       socketRef.current = null;
     };
-  }, [currentOrganization?.id, loadResources, loadSecurityGroups, token]);
+  }, [
+    currentOrganization?.id,
+    loadResources,
+    loadSecurityGroups,
+    removeResourceFromState,
+    token,
+    updateResourceInState,
+  ]);
 
   useEffect(() => {
-    if (!token || !currentOrganization?.id || cleanupRanRef.current)
+    if (
+      !token ||
+      !currentOrganization?.id ||
+      cleanedOrgIdRef.current === currentOrganization.id
+    )
       return undefined;
-    cleanupRanRef.current = true;
+    cleanedOrgIdRef.current = currentOrganization.id;
 
     const cleanupPending = async () => {
       try {
@@ -1157,23 +1193,19 @@ const Resources = () => {
       setShowCreateModal(false);
       setNewVM({ name: "", engine: "PostgreSQL", instance_type: "t2.micro" });
       setSelectedSecurityGroupIds([]);
-      
-      // Award points for resource creation
+
+      // Award XP for resource creation (backend defines points via XP_RULES)
+      const actionType = createMode === "vm" ? "vm_created" : "db_created";
       try {
         await axios.post(
           `${API_URL}/progress/award`,
-          {
-            action: createMode === "database" ? "db_created" : "vm_created",
-            points: 10,
-            org_id: currentOrganization?.id,
-          },
+          { action: actionType, org_id: currentOrganization?.id },
           { headers: authHeaders },
         );
       } catch (awardError) {
-        // Don't fail the whole operation if awarding points fails
-        console.error("Failed to award points:", awardError);
+        console.error("Failed to award XP:", awardError);
       }
-      
+
       toast.success(
         createMode === "database"
           ? "Database created successfully"
@@ -1197,6 +1229,16 @@ const Resources = () => {
       setResources((prev) => prev.filter((item) => item?.id !== resourceId));
       if (selectedVM?.id === resourceId) {
         setSelectedVM(null);
+      }
+      // Award XP for resource deletion (backend defines points via XP_RULES)
+      try {
+        await axios.post(
+          `${API_URL}/progress/award`,
+          { action: "resource_deleted", org_id: currentOrganization?.id },
+          { headers: authHeaders },
+        );
+      } catch (awardError) {
+        console.error("Failed to award XP:", awardError);
       }
       toast.success("VM deleted");
     } catch (error) {
