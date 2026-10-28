@@ -120,6 +120,11 @@ def update_policy(policy_id):
     data = request.get_json() or {}
     old_values = policy.to_dict()
 
+    if 'status' in data and data['status'] not in {status.value for status in PolicyStatus}:
+        return _error('Invalid policy status', 400)
+    if 'name' in data and not (data['name'] or '').strip():
+        return _error('Policy name is required', 400)
+
     policy.name = (data.get('name') or policy.name).strip()
     policy.description = data.get('description', policy.description)
     policy.auto_remediate = bool(data.get('auto_remediate', policy.auto_remediate))
@@ -136,7 +141,7 @@ def update_policy(policy_id):
         policy.policy_type = rule_fields.get('type', policy.policy_type or 'custom')
         policy.severity = rule_fields.get('severity', policy.severity or 'medium')
 
-    if data.get('status') in {status.value for status in PolicyStatus}:
+    if data.get('status'):
         policy.status = PolicyStatus(data['status'])
 
     governance_engine._record_audit_event(
@@ -224,3 +229,44 @@ def get_audit_logs():
         .all()
     )
     return _success({'logs': [log.to_dict() for log in logs], 'total': len(logs)})
+
+
+@governance_bp.route('/violations', methods=['GET'])
+@jwt_required()
+def get_violations():
+    """Open violations from each active policy's latest persisted run."""
+    user_id = get_jwt_identity()
+    org_id = _resolve_org_id()
+    if not _require_org_member(user_id, org_id):
+        return _error('Access denied', 403)
+
+    state = governance_engine.get_latest_state(org_id)
+    violations = state['violations']
+    severity = (request.args.get('severity') or '').lower()
+    policy_id = request.args.get('policy_id', type=int)
+    if severity:
+        violations = [v for v in violations if str(v['severity'] or '').lower() == severity]
+    if policy_id:
+        violations = [v for v in violations if v['policy_id'] == policy_id]
+    return _success({
+        'violations': violations,
+        'total': len(violations),
+        'last_checked_at': state['last_checked_at'],
+    })
+
+
+@governance_bp.route('/score', methods=['GET'])
+@jwt_required()
+def get_score():
+    """Explainable governance score from the latest persisted run (does not re-run checks)."""
+    user_id = get_jwt_identity()
+    org_id = _resolve_org_id()
+    if not _require_org_member(user_id, org_id):
+        return _error('Access denied', 403)
+
+    state = governance_engine.get_latest_state(org_id)
+    return _success({
+        'evaluated': state['evaluated'],
+        'last_checked_at': state['last_checked_at'],
+        **state['governance_score'],
+    })

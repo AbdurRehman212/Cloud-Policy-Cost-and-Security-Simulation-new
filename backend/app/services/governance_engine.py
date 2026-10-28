@@ -5,7 +5,19 @@ from datetime import datetime
 from app import db
 from app.ai_models.policy_engine import policy_engine
 from app.models.governance import AuditLog, ComplianceCheck, Policy, PolicyStatus
-from app.models.resources import Database, VirtualMachine
+from app.models.resources import Database, ResourceStatus, VirtualMachine
+
+SEVERITY_WEIGHTS = {'critical': 4, 'high': 3, 'medium': 2, 'low': 1}
+SEVERITY_ALIASES = {'warning': 'medium', 'info': 'low'}
+SCORE_FORMULA = (
+    'score = 100 x sum(weight x compliant checks) / sum(weight x total checks); '
+    'weight by policy severity: critical=4, high=3, medium=2, low=1 (warning=medium, info=low).'
+)
+
+
+def severity_weight(severity) -> int:
+    key = str(severity or 'medium').lower()
+    return SEVERITY_WEIGHTS.get(SEVERITY_ALIASES.get(key, key), SEVERITY_WEIGHTS['medium'])
 
 
 class GovernanceEngine:
@@ -84,11 +96,13 @@ class GovernanceEngine:
                     'compliant_resources': policy_compliant,
                     'violations_found': len(policy_violations),
                     'compliance_score': score,
+                    'severity': policy.severity,
+                    'weight': severity_weight(policy.severity),
                     'violations': policy_violations,
                 }
             )
 
-        overall_score = 100.0 if total_checks == 0 else round((compliant_checks / total_checks) * 100, 2)
+        overall_score = GovernanceEngine.compute_score(policy_results)
         summary = {
             'checked_at': checked_at.isoformat(),
             'org_id': org_id,
@@ -97,7 +111,8 @@ class GovernanceEngine:
             'resources_evaluated': total_checks,
             'compliant_resources': compliant_checks,
             'violations_found': violations_found,
-            'compliance_score': overall_score,
+            'compliance_score': overall_score['score'],
+            'governance_score': overall_score,
         }
 
         GovernanceEngine._record_audit_event(
@@ -118,6 +133,82 @@ class GovernanceEngine:
         }
 
     @staticmethod
+    def compute_score(policy_results: list[dict]) -> dict:
+        """Explainable severity-weighted score from per-policy results."""
+        weighted_total = 0
+        weighted_pass = 0
+        breakdown = []
+        for result in policy_results:
+            weight = result.get('weight') or severity_weight(result.get('severity'))
+            total = result['resources_evaluated']
+            compliant = result['compliant_resources']
+            weighted_total += weight * total
+            weighted_pass += weight * compliant
+            breakdown.append({
+                'policy_id': result['policy_id'],
+                'policy_name': result['policy_name'],
+                'severity': result.get('severity'),
+                'weight': weight,
+                'resources_evaluated': total,
+                'violations': total - compliant,
+                'penalty_points': weight * (total - compliant),
+                'pass_rate': result['compliance_score'],
+            })
+        score = 100.0 if weighted_total == 0 else round(weighted_pass / weighted_total * 100, 2)
+        return {'score': score, 'formula': SCORE_FORMULA, 'breakdown': breakdown}
+
+    @staticmethod
+    def get_latest_state(org_id: int) -> dict:
+        """Score and open violations from each ACTIVE policy's most recent persisted run."""
+        policies = (
+            Policy.query
+            .filter_by(organization_id=org_id, status=PolicyStatus.ACTIVE)
+            .order_by(Policy.id.asc())
+            .all()
+        )
+        policy_results = []
+        violations = []
+        last_checked = None
+        for policy in policies:
+            latest = (
+                db.session.query(db.func.max(ComplianceCheck.checked_at))
+                .filter(ComplianceCheck.policy_id == policy.id)
+                .scalar()
+            )
+            checks = [] if latest is None else ComplianceCheck.query.filter_by(
+                policy_id=policy.id, checked_at=latest
+            ).all()
+            failed = [c for c in checks if not c.is_compliant]
+            for check in failed:
+                violations.append({
+                    'policy_id': policy.id,
+                    'policy_name': policy.name,
+                    'severity': policy.severity,
+                    'resource_id': check.resource_id,
+                    'resource_type': check.resource_type,
+                    'violations': (check.violation_details or {}).get('violations', []),
+                    'checked_at': check.checked_at.isoformat(),
+                })
+            if latest and (last_checked is None or latest > last_checked):
+                last_checked = latest
+            total = len(checks)
+            policy_results.append({
+                'policy_id': policy.id,
+                'policy_name': policy.name,
+                'severity': policy.severity,
+                'weight': severity_weight(policy.severity),
+                'resources_evaluated': total,
+                'compliant_resources': total - len(failed),
+                'compliance_score': 100.0 if total == 0 else round((total - len(failed)) / total * 100, 2),
+            })
+        return {
+            'last_checked_at': last_checked.isoformat() if last_checked else None,
+            'evaluated': last_checked is not None,
+            'governance_score': GovernanceEngine.compute_score(policy_results),
+            'violations': violations,
+        }
+
+    @staticmethod
     def get_recent_checks(org_id: int, limit: int = 100) -> list[dict]:
         checks = (
             ComplianceCheck.query
@@ -131,8 +222,14 @@ class GovernanceEngine:
 
     @staticmethod
     def _load_resources(org_id: int) -> list[dict]:
-        vms = VirtualMachine.query.filter_by(organization_id=org_id).all()
-        databases = Database.query.filter_by(organization_id=org_id).all()
+        vms = VirtualMachine.query.filter(
+            VirtualMachine.organization_id == org_id,
+            VirtualMachine.status != ResourceStatus.TERMINATED,
+        ).all()
+        databases = Database.query.filter(
+            Database.organization_id == org_id,
+            Database.status != ResourceStatus.TERMINATED,
+        ).all()
         return [vm.to_dict() for vm in vms] + [database.to_dict() for database in databases]
 
     @staticmethod
