@@ -19,6 +19,23 @@ def _error(message, status_code=400):
 def _frontend_url(path):
     base_url = current_app.config.get('FRONTEND_BASE_URL') or request.host_url.rstrip('/')
     return f"{base_url}{path}" if base_url else path
+def _may_assign(actor_role, current_role, new_role):
+    """Role-assignment rule (deny by default).
+
+    owner  -> may set admin/member/viewer on anyone except another owner
+    admin  -> may only set member/viewer, and only on members/viewers (never grant or touch admin/owner)
+    others -> never
+    current_role is None for a brand-new member.
+    """
+    if new_role not in ('admin', 'member', 'viewer') or current_role == 'owner':
+        return False
+    if actor_role == 'owner':
+        return True
+    if actor_role == 'admin':
+        return current_role in (None, 'member', 'viewer') and new_role in ('member', 'viewer')
+    return False
+
+
 @org_bp.route('/', methods=['POST'])
 @jwt_required()
 def create_organization():
@@ -68,6 +85,8 @@ def list_organizations():
     orgs = []
     for membership in memberships:
         org = membership.organization
+        if org.is_active is False:
+            continue
         org_data = org.to_dict()
         org_data['organization_id'] = org.id
         org_data['role'] = membership.role
@@ -121,6 +140,9 @@ def invite_member(org_id):
     role = data.get('role', 'member')
     if role not in ['admin', 'member', 'viewer']:
         return _error('Invalid role', status_code=400)
+    from app.utils.rbac import get_user_role_in_org
+    if not _may_assign(get_user_role_in_org(int(user_id), org_id), None, role):
+        return _error('Only owners can grant the admin role', status_code=403)
     # Check if already member
     existing_user = User.query.filter_by(email=email).first()
     if existing_user:
@@ -204,6 +226,9 @@ def remove_member(org_id, member_id):
     # Cannot remove owner
     if target_member.role == 'owner':
         return _error('Cannot remove owner', status_code=403)
+    from app.utils.rbac import get_user_role_in_org
+    if target_member.role == 'admin' and get_user_role_in_org(int(get_jwt_identity()), org_id) != 'owner':
+        return _error('Only owners can remove admins', status_code=403)
     db.session.delete(target_member)
     db.session.commit()
     return _success({'message': 'Member removed'})
@@ -249,6 +274,8 @@ def update_member_role(org_id, target_user_id):
         return _error('Member not found', status_code=404)
     if target.role == 'owner':
         return _error('Cannot change owner role', status_code=403)
+    if not _may_assign(current.role, target.role, new_role):
+        return _error('Only owners can grant or change the admin role', status_code=403)
     target.role = new_role
     db.session.commit()
     return _success({'message': 'Role updated', 'role': new_role})
@@ -352,20 +379,14 @@ def simple_invite():
     if not current_member or current_member.role not in ['owner', 'admin']:
         return _error('Permission denied', status_code=403)
 
+    # Never create accounts on someone else's behalf (that would need a shared/default password).
     target_user = User.query.filter_by(email=email).first()
     if not target_user:
-        target_user = User(
-            email=email,
-            first_name=email.split('@')[0],
-            last_name='User',
-            is_active=True,
-            email_verified=True
-        )
-        target_user.set_password('Demo1234')
-        db.session.add(target_user)
-        db.session.flush()
+        return _error('No account exists for this email. Ask them to register first, then invite them again.', status_code=404)
 
     existing_member = OrganizationMember.query.filter_by(organization_id=org_id, user_id=target_user.id).first()
+    if not _may_assign(current_member.role, existing_member.role if existing_member else None, role):
+        return _error('You are not allowed to assign this role', status_code=403)
     if existing_member:
         existing_member.role = role
     else:

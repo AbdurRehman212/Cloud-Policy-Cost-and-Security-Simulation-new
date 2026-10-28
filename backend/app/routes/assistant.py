@@ -87,6 +87,8 @@ def chat():
     """Simple local assistant for the project demo."""
     data = request.get_json(silent=True) or {}
     message = data.get('message', '')
+    if not isinstance(message, str) or len(message) > 1000:
+        return jsonify({'error': 'message must be text of at most 1000 characters'}), 400
     reply = build_assistant_reply(message)
     return jsonify({
         'reply': reply,

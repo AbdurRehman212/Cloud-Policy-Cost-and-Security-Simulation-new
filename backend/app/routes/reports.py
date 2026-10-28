@@ -11,6 +11,7 @@ from reportlab.lib.pagesizes import letter
 from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 from reportlab.lib.styles import getSampleStyleSheet
 
+from app.utils.rbac import active_membership
 from app.models.cost import CostRecord
 from app.models.governance import Policy
 from app.models.organization import Organization, OrganizationMember
@@ -29,7 +30,7 @@ def _resolve_org_id_from_request(payload=None):
 def _require_org_membership(user_id, org_id):
     if org_id is None:
         return None
-    return OrganizationMember.query.filter_by(organization_id=org_id, user_id=user_id).first()
+    return active_membership(user_id, org_id)
 
 
 def _infer_plan(max_resources):

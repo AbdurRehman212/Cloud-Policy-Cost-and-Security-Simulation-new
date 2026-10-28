@@ -4,12 +4,29 @@ ROLE_HIERARCHY = {'viewer': 0, 'member': 1, 'admin': 2, 'owner': 3}
 
 
 def get_user_role_in_org(user_id, org_id):
-    from app.models.organization import OrganizationMember
+    from app.models.organization import Organization, OrganizationMember
     m = OrganizationMember.query.filter_by(
         user_id=user_id,
         organization_id=org_id
     ).first()
-    return m.role if m else None
+    if not m:
+        return None
+    org = Organization.query.get(org_id)
+    if org is None or org.is_active is False:  # soft-deleted organizations grant no access
+        return None
+    return m.role
+
+
+def active_membership(user_id, org_id):
+    """The user's membership in an organization, or None (also None for soft-deleted organizations)."""
+    from app.models.organization import Organization, OrganizationMember
+    if org_id is None:
+        return None
+    member = OrganizationMember.query.filter_by(organization_id=org_id, user_id=user_id).first()
+    if member is None:
+        return None
+    org = Organization.query.get(org_id)
+    return member if org is not None and org.is_active is not False else None
 
 
 def require_org_role(min_role='member'):

@@ -4,6 +4,7 @@ from flask import Blueprint, jsonify, request
 from flask_jwt_extended import get_jwt_identity, jwt_required
 
 from app import db
+from app.utils.rbac import active_membership
 from app.models.governance import AuditLog, ComplianceCheck, Policy, PolicyStatus
 from app.models.organization import OrganizationMember
 from app.services.governance_engine import governance_engine
@@ -18,7 +19,7 @@ def _resolve_org_id():
 def _require_org_member(user_id: int, org_id: int):
     if org_id is None:
         return None
-    return OrganizationMember.query.filter_by(organization_id=org_id, user_id=user_id).first()
+    return active_membership(user_id, org_id)
 
 
 def _error(message: str, status_code: int = 400):

@@ -75,3 +75,49 @@ def test_cannot_spoof_other_org_in_request_body_or_query(client, world):  # TC-M
     assert client.get(f'/api/reports/cost.csv?organization_id={org_a}', headers=other).status_code == 403
     assert client.get(f'/api/security/threats?organization_id={org_a}', headers=other).status_code == 403
     assert client.get(f'/api/governance/violations?organization_id={org_a}', headers=other).status_code == 403
+
+
+def test_invite_demo_never_creates_accounts_or_default_passwords(client, world):  # ASVS V2: no default credentials
+    org = world['org_a']
+    before = User.query.count()
+    r = client.post(f'{ORG}/invite_demo', json={'email': 'ghost@t.io', 'role': 'viewer', 'organization_id': org}, headers=world['owner'])
+    assert r.status_code == 404
+    assert User.query.count() == before
+
+
+def test_role_assignment_rules(client, world):  # TC-M2-ROLES
+    org = world['org_a']
+    uid = lambda email: User.query.filter_by(email=email).one().id  # noqa: E731
+    # admin cannot grant admin, demote the owner, or touch another admin
+    assert client.post(f'{ORG}/invite_demo', json={'email': 'viewer@t.io', 'role': 'admin', 'organization_id': org}, headers=world['admin']).status_code == 403
+    assert client.post(f'{ORG}/invite_demo', json={'email': 'owner@t.io', 'role': 'viewer', 'organization_id': org}, headers=world['admin']).status_code == 403
+    assert client.put(f'{ORG}/{org}/members/{uid("viewer@t.io")}/role', json={'role': 'admin'}, headers=world['admin']).status_code == 403
+    assert client.post(f'{ORG}/{org}/invite', json={'email': 'x@t.io', 'role': 'admin'}, headers=world['admin']).status_code == 403
+    # admin may manage members/viewers
+    assert client.put(f'{ORG}/{org}/members/{uid("viewer@t.io")}/role', json={'role': 'member'}, headers=world['admin']).status_code == 200
+    # owner may grant admin; the owner role itself can never be changed
+    assert client.put(f'{ORG}/{org}/members/{uid("viewer@t.io")}/role', json={'role': 'admin'}, headers=world['owner']).status_code == 200
+    assert client.put(f'{ORG}/{org}/members/{world["owner_id"]}/role', json={'role': 'viewer'}, headers=world['owner']).status_code == 403
+    # a (now second) admin cannot be removed by an admin, but can be by the owner
+    victim = OrganizationMember.query.filter_by(organization_id=org, user_id=uid('viewer@t.io')).one()
+    assert client.delete(f'{ORG}/{org}/members/{victim.id}', headers=world['admin']).status_code == 403
+    assert client.delete(f'{ORG}/{org}/members/{victim.id}', headers=world['owner']).status_code == 200
+
+
+def test_role_change_applies_immediately_to_existing_token(client, world):  # stale privileges
+    org = world['org_a']
+    body = {'organization_id': org, 'name': 'b', 'amount': 5, 'start_date': '2026-10-01'}
+    assert client.post('/api/cost/budgets', json=body, headers=world['admin']).status_code == 201
+    admin_id = User.query.filter_by(email='admin@t.io').one().id
+    assert client.put(f'{ORG}/{org}/members/{admin_id}/role', json={'role': 'viewer'}, headers=world['owner']).status_code == 200
+    assert client.post('/api/cost/budgets', json=body, headers=world['admin']).status_code == 403
+
+
+def test_deleted_organization_grants_no_access(client, world):
+    org = world['org_a']
+    assert client.delete(f'{ORG}/{org}', headers=world['admin']).status_code == 403  # owner only
+    assert client.delete(f'{ORG}/{org}', headers=world['owner']).status_code == 200
+    listed = client.get(f'{ORG}/', headers=world['owner']).get_json()['data']['organizations']
+    assert org not in [o['id'] for o in listed]
+    assert client.get(f'/api/resources?organization_id={org}', headers=world['owner']).status_code == 403
+    assert client.post('/api/resources/vm', json={'organization_id': org, 'name': 'zombie'}, headers=world['owner']).status_code == 403

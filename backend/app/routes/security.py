@@ -1,6 +1,7 @@
 from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from app import db, socketio
+from app.utils.rbac import active_membership
 from app.models.security import AlertRule, SecurityLog, ThreatDetection, RemediationAction, ThreatType, ThreatSeverity
 from app.models.organization import OrganizationMember
 from app.services.alert_rule_service import (
@@ -79,7 +80,7 @@ def _get_org_membership(org_id, user_id):
     if org_id is None:
         return None
 
-    return OrganizationMember.query.filter_by(organization_id=org_id, user_id=user_id).first()
+    return active_membership(user_id, org_id)
 
 
 def _is_security_manager(member):

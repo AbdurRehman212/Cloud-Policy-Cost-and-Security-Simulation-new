@@ -3,6 +3,7 @@ from flask import current_app
 from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from app import db, socketio
+from app.utils.rbac import active_membership
 from app.services.learning_context_engine import learning_context_service
 from app.services.operational_event_service import operational_event_service
 from app.models.resources import (
@@ -190,8 +191,9 @@ def _ensure_org_membership(user_id):
         .order_by(OrganizationMember.joined_at.asc(), OrganizationMember.id.asc())
         .all()
     )
-    if memberships:
-        return {m.organization_id for m in memberships}
+    allowed = {m.organization_id for m in memberships if active_membership(user_id, m.organization_id)}
+    if allowed:
+        return allowed
 
     return set()
 
@@ -241,6 +243,10 @@ def check_org_access(user_id, org_id, min_role='member'):
         organization_id=org_id, user_id=user_id
     ).first()
     if not member:
+        return None
+    from app.models.organization import Organization
+    org = Organization.query.get(org_id)
+    if org is None or org.is_active is False:  # soft-deleted organizations grant no access
         return None
     role_hierarchy = {'viewer': 1, 'member': 2, 'admin': 3, 'owner': 4}
     if role_hierarchy.get(member.role, 0) < role_hierarchy.get(min_role, 2):
@@ -660,6 +666,8 @@ def _provision_database_record(org_id, data):
 def list_vpcs():
     """List VPCs with nested subnets for the org."""
     user_id = get_jwt_identity()
+    if _requested_org_denied(user_id, request.args.get('organization_id', type=int)):
+        return _error('Access denied', status_code=403, code='forbidden')
     org_id = _resolve_org_id_for_user(user_id, request.args.get('organization_id', type=int))
     if org_id is None:
         return _success([])
@@ -674,6 +682,8 @@ def list_vpcs():
 def network_topology():
     """Return full VPC → Subnet → VM/DB map for the org."""
     user_id = get_jwt_identity()
+    if _requested_org_denied(user_id, request.args.get('organization_id', type=int)):
+        return _error('Access denied', status_code=403, code='forbidden')
     org_id = _resolve_org_id_for_user(user_id, request.args.get('organization_id', type=int))
     if org_id is None:
         return _success({'vpcs': []})
