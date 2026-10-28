@@ -112,3 +112,13 @@ def test_forecast_without_org_data_is_labelled_not_persisted(client, world):
     d = client.get(f"{C}/forecast?organization_id={world['org_a']}&days=3", headers=world['viewer']).get_json()
     assert d['basis'] in ('reference_dataset', 'no_data') and d['note']
     assert CostForecast.query.filter_by(organization_id=world['org_a']).count() == 0
+
+
+def test_summary_total_matches_resources_and_trend_for_small_costs(client, world):  # regression: 2dp total vs 4dp rows
+    today = date.today()
+    add_cost(world['org_a'], today, 0.0016, 'i-a')
+    add_cost(world['org_a'], today, 0.0013, 'i-b')
+    d = client.get(f"{C}/summary?organization_id={world['org_a']}&days=7", headers=world['viewer']).get_json()
+    assert d['total'] == 0.0029
+    assert round(sum(r['total_cost'] for r in d['by_resource']), 4) == d['total']
+    assert round(sum(p['total_cost'] for p in d['trend']), 4) == d['total']

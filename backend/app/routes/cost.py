@@ -300,6 +300,7 @@ def get_cost_summary():
         for key in ('compute_cost', 'storage_cost', 'network_cost', 'total_cost'):
             entry[key] = round(entry[key], 4)
 
+    # total, trend and by_resource all derive from CostRecord and share 4-decimal precision.
     change_pct = round((total - previous_total) / previous_total * 100, 2) if previous_total > 0 else None
     return jsonify({
         'org_id': org_id,
@@ -308,8 +309,8 @@ def get_cost_summary():
         'days': days,
         'start_date': start.isoformat(),
         'end_date': today.isoformat(),
-        'total': round(total, 2),
-        'previous_period_total': round(previous_total, 2),
+        'total': round(total, 4),
+        'previous_period_total': round(previous_total, 4),
         'change_pct': change_pct,
         'trend': [{'date': d, 'total_cost': round(v, 4)} for d, v in by_day.items()],
         'by_resource': resources,
