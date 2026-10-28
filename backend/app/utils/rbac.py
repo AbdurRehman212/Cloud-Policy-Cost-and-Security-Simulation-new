@@ -21,12 +21,14 @@ def require_org_role(min_role='member'):
             verify_jwt_in_request()
             user_id = int(get_jwt_identity())
             data = request.get_json(silent=True) or {}
+            # The org in the URL is the resource being acted on, so it must win over
+            # client-supplied body/query values (otherwise a role in another org can be spoofed).
             org_id = (
-                data.get('organization_id')
+                (request.view_args or {}).get('org_id')
+                or data.get('organization_id')
                 or data.get('org_id')
                 or request.args.get('organization_id')
                 or request.args.get('org_id')
-                or (request.view_args or {}).get('org_id')
             )
             if not org_id:
                 return jsonify({'error': 'organization_id required'}), 400
