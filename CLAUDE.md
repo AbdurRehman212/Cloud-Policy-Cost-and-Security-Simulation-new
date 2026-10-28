@@ -98,12 +98,12 @@ User (account) → OrganizationMember (role-based) → Organization (tenant)
 - `POST /api/auth/refresh` - Token refresh
 
 ### Organization
-- `GET /api/organizations` - List user's organizations
-- `POST /api/organizations` - Create organization
-- `GET /api/organizations/<id>` - Get organization details
-- `PUT /api/organizations/<id>` - Update organization
-- `DELETE /api/organizations/<id>` - Delete organization
-- `POST /api/organizations/<id>/invite` - Invite members
+- `GET /api/org` - List user's organizations
+- `POST /api/org` - Create organization
+- `GET /api/org/<id>` - Get organization details
+- `PUT /api/org/<id>` - Update organization
+- `DELETE /api/org/<id>` - Delete organization
+- `POST /api/org/<id>/invite` - Invite members
 
 ### Resources (VM/Database)
 - `GET /api/resources` - List all resources for org
