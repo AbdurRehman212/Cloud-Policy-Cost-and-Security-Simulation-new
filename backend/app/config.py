@@ -6,7 +6,8 @@ from dotenv import load_dotenv
 
 load_dotenv(override=True)
 
-PG_URL = 'postgresql://abdur:admin123@localhost/cloud_simulator'
+# Credential-free local default; set DATABASE_URL in backend/.env (git-ignored) with real credentials.
+PG_URL = 'postgresql://localhost/cloud_simulator'
 
 
 def _normalize_base_url(url, fallback):
@@ -89,7 +90,9 @@ class ProductionConfig(Config):
     SQLALCHEMY_DATABASE_URI = os.environ.get('DATABASE_URL') or PG_URL
 class TestingConfig(Config):
     TESTING = True
-    SQLALCHEMY_DATABASE_URI = os.environ.get('TEST_DATABASE_URL') or PG_URL
+    SQLALCHEMY_DATABASE_URI = os.environ.get('TEST_DATABASE_URL') or 'sqlite://'
+    SQLALCHEMY_ENGINE_OPTIONS = {}
+    ENABLE_SIMULATION_THREADS = False
 config = {
     'development': DevelopmentConfig,
     'production': ProductionConfig,

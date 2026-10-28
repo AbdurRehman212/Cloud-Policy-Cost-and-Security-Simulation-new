@@ -30,7 +30,7 @@ Cloud simulator for learning cloud infrastructure management - provision VMs, co
 - **HTTP:** Axios
 
 ### Infrastructure
-- **Database:** PostgreSQL at `postgresql://abdur:admin123@localhost/cloud_simulator`
+- **Database:** PostgreSQL at `postgresql://<user>:<password>@localhost/cloud_simulator  (set via DATABASE_URL in backend/.env; never commit)`
 - **Cache:** Redis at `redis://localhost:6379/0`
 - **Runtime:** Python 3.x with eventlet for async I/O
 
@@ -224,7 +224,7 @@ Dashboard topology visualization component for frontend integration
 ### Environment Variables
 ```bash
 FLASK_ENV=development
-DATABASE_URL=postgresql://abdur:admin123@localhost/cloud_simulator
+DATABASE_URL=postgresql://<user>:<password>@localhost/cloud_simulator  # set in backend/.env, never commit
 REDIS_URL=redis://localhost:6379/0
 SECRET_KEY=<secret>
 JWT_SECRET_KEY=<jwt-secret>
