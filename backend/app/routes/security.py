@@ -433,7 +433,7 @@ def analyze_traffic():
             affected_resources=data.get('resource_ids', []),
             attack_vectors={'metrics': current_metrics},
             network_traffic_snapshot=current_metrics,
-            model_version=result.get('source'),
+            model_version=(result.get('model_version') or result.get('source') or '')[:20],
             detection_pattern=f'{result.get("threat_type", "suspicious_behavior")} traffic pattern detected',
         )
         db.session.add(threat)
@@ -515,6 +515,15 @@ def resolve_threat(threat_id):
     db.session.commit()
     _emit_security_updates(threat.organization_id, {'threat': threat.to_dict(), 'status': 'resolved'})
     return jsonify({'message': 'Threat marked as resolved'}), 200
+@security_bp.route('/model-info', methods=['GET'])
+@jwt_required()
+def model_info():
+    """What the running backend actually loaded (for transparency and viva questions)."""
+    if not threat_detector:
+        return jsonify({'backend': 'rule-based', 'version': 'basic_threat_analysis'}), 200
+    return jsonify({**threat_detector.model_info, 'backend': threat_detector.backend}), 200
+
+
 @security_bp.route('/simulate', methods=['POST'])
 @security_bp.route('/simulate-attack', methods=['POST'])
 @jwt_required()
