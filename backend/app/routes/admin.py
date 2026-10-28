@@ -10,7 +10,11 @@ admin_bp = Blueprint('admin', __name__)
 @admin_bp.route('/reset-system', methods=['POST'])
 @jwt_required()
 def reset_system():
-    """Cleanly reset the entire system state to a small baseline (1 VM)."""
+    """Cleanly reset the entire system state to a small baseline (1 VM). Development only."""
+    # This deletes data for EVERY organization (including audit logs). There is no platform-admin role,
+    # so it is unreachable unless ALLOW_SYSTEM_RESET=true is set deliberately.
+    if not current_app.config.get('ALLOW_SYSTEM_RESET'):
+        return jsonify({'status': 'error', 'error': {'message': 'Not found'}}), 404
     try:
         # Task 2: Wrap in transaction (db.session acts as one, we'll explicitly use a transaction)
         

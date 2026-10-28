@@ -398,6 +398,8 @@ def analyze_traffic():
     member = _get_org_membership(org_id, user_id)
     if not member:
         return jsonify({'error': 'Access denied'}), 403
+    if member.role == 'viewer':  # analysis can persist threat records and trigger alert rules
+        return jsonify({'error': 'Viewers cannot run threat analysis'}), 403
     # Simulate current metrics
     current_metrics = {
         'requests_per_minute': data.get('requests_per_minute', 1000),

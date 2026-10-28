@@ -51,3 +51,36 @@ def test_outsider_gets_no_data_from_org_scoped_reads(client, app, world):
 def test_assistant_rejects_oversized_input(client):
     assert client.post('/api/assistant/chat', json={'message': 'x' * 1001}).status_code == 400
     assert client.post('/api/assistant/chat', json={'message': 'how to run locally'}).status_code == 200
+
+
+# Mutating routes a viewer may legitimately call because they only touch the caller's own account/progress.
+VIEWER_SELF_SERVICE_PREFIXES = (
+    '/api/auth/', '/api/settings', '/api/assistant', '/api/learning', '/api/scenarios', '/api/progress',
+    '/api/membership',
+)
+# Allowed for every authenticated user: creating one's OWN organization, and read-only PDF generation.
+VIEWER_ALLOWED_ROUTES = {('POST', '/api/org/'), ('POST', '/api/reports/generate')}
+
+
+def test_viewer_cannot_mutate_organization_data(client, app, world):
+    """Least privilege: a viewer's write attempts on org-scoped routes must not succeed."""
+    org = world['org_a']
+    succeeded = []
+    for method, path, rule in _routes(app):
+        if method not in {'POST', 'PUT', 'PATCH', 'DELETE'} or rule.startswith(VIEWER_SELF_SERVICE_PREFIXES):
+            continue
+        if (method, rule) in VIEWER_ALLOWED_ROUTES:
+            continue
+        res = client.open(f'{path}?organization_id={org}', method=method,
+                          json={'organization_id': org, 'name': 'x', 'email': 'v@t.io', 'role': 'viewer',
+                                'policy_rule': 'VM names must start with web-', 'amount': 5, 'start_date': '2026-10-01'},
+                          headers=world['viewer'])
+        if 200 <= res.status_code < 300:
+            succeeded.append(f'{method} {rule} -> {res.status_code}')
+    assert not succeeded, 'viewer write succeeded:\n' + '\n'.join(sorted(succeeded))
+
+
+def test_system_reset_is_disabled_by_default(client, world):  # destructive, cross-tenant
+    for role in ('viewer', 'admin', 'owner', 'other'):
+        assert client.post('/api/admin/reset-system', headers=world[role]).status_code == 404
+    assert client.post('/api/admin/reset-system').status_code in (401, 422)

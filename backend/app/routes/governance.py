@@ -194,6 +194,8 @@ def check_compliance():
     member = _require_org_member(user_id, org_id)
     if not member:
         return _error('Access denied', 403)
+    if member.role == 'viewer':  # a check persists results and audit entries, so it is not a read-only action
+        return _error('Viewers cannot run compliance checks', 403)
 
     result = governance_engine.evaluate_org_policies(org_id, actor_user_id=user_id)
     return _success(result)

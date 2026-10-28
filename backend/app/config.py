@@ -64,6 +64,9 @@ class Config:
     MAX_SIMULATED_RESOURCES = int(os.environ.get('MAX_SIMULATED_RESOURCES', 100))
     DEFAULT_CURRENCY = os.environ.get('DEFAULT_CURRENCY', 'USD')
     ENABLE_SIMULATION_THREADS = os.environ.get('ENABLE_SIMULATION_THREADS', 'true').lower() == 'true'
+    # Destructive, system-wide reset endpoint. Off unless explicitly enabled for local development;
+    # scripts/reset_system.py is the supported way to reset a development database.
+    ALLOW_SYSTEM_RESET = os.environ.get('ALLOW_SYSTEM_RESET', 'false').lower() == 'true'
     ENABLE_REALTIME_METRICS = os.environ.get('ENABLE_REALTIME_METRICS', 'true').lower() == 'true'
     # Pricing (Simulated AWS-like pricing per hour)
     VM_PRICING = {
