@@ -619,8 +619,8 @@ const VmDetailModal = ({
 
                 <div className="mt-5 grid gap-4 lg:grid-cols-2">
                   <div>
-                    <label className="mb-2 block text-sm font-medium text-slate-300">Resize instance type</label>
-                    <select
+                    <label className="mb-2 block text-sm font-medium text-slate-300" htmlFor="resources-f1">Resize instance type</label>
+                    <select id="resources-f1"
                       value={resizeTarget}
                       onChange={(event) => setResizeTarget(event.target.value)}
                       className="w-full rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 text-white outline-none transition-colors focus:border-cyan-400"
@@ -650,8 +650,8 @@ const VmDetailModal = ({
 
                 <div className="mt-5 grid gap-4 lg:grid-cols-2">
                   <div>
-                    <label className="mb-2 block text-sm font-medium text-slate-300">Add tag key</label>
-                    <input
+                    <label className="mb-2 block text-sm font-medium text-slate-300" htmlFor="resources-f2">Add tag key</label>
+                    <input id="resources-f2"
                       value={tagKey}
                       onChange={(event) => setTagKey(event.target.value)}
                       className="w-full rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 text-white outline-none transition-colors focus:border-cyan-400"
@@ -659,8 +659,8 @@ const VmDetailModal = ({
                     />
                   </div>
                   <div>
-                    <label className="mb-2 block text-sm font-medium text-slate-300">Add tag value</label>
-                    <input
+                    <label className="mb-2 block text-sm font-medium text-slate-300" htmlFor="resources-f3">Add tag value</label>
+                    <input id="resources-f3"
                       value={tagValue}
                       onChange={(event) => setTagValue(event.target.value)}
                       className="w-full rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 text-white outline-none transition-colors focus:border-cyan-400"
@@ -1707,10 +1707,10 @@ const Resources = () => {
                     className="space-y-4"
                   >
                     <div>
-                      <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                      <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1" htmlFor="resources-f4">
                         Name
                       </label>
-                      <input
+                      <input id="resources-f4"
                         type="text"
                         className="input-field"
                         value={newSecurityGroup.name}
@@ -1724,10 +1724,10 @@ const Resources = () => {
                       />
                     </div>
                     <div>
-                      <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                      <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1" htmlFor="resources-f5">
                         Description
                       </label>
-                      <textarea
+                      <textarea id="resources-f5"
                         className="input-field min-h-[96px]"
                         value={newSecurityGroup.description}
                         onChange={(event) =>
@@ -1861,10 +1861,10 @@ const Resources = () => {
                 className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-6 gap-4"
               >
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1" htmlFor="resources-f6">
                     Security Group
                   </label>
-                  <select
+                  <select id="resources-f6"
                     className="input-field"
                     value={newSecurityRule.group_id}
                     onChange={(event) =>
@@ -1883,10 +1883,10 @@ const Resources = () => {
                   </select>
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1" htmlFor="resources-f7">
                     Direction
                   </label>
-                  <select
+                  <select id="resources-f7"
                     className="input-field"
                     value={newSecurityRule.direction}
                     onChange={(event) =>
@@ -1901,10 +1901,10 @@ const Resources = () => {
                   </select>
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1" htmlFor="resources-f8">
                     Protocol
                   </label>
-                  <select
+                  <select id="resources-f8"
                     className="input-field"
                     value={newSecurityRule.protocol}
                     onChange={(event) =>
@@ -1921,10 +1921,10 @@ const Resources = () => {
                   </select>
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1" htmlFor="resources-f9">
                     Port Range
                   </label>
-                  <input
+                  <input id="resources-f9"
                     type="text"
                     className="input-field"
                     value={newSecurityRule.port_range}
@@ -1938,10 +1938,10 @@ const Resources = () => {
                   />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1" htmlFor="resources-f10">
                     Source CIDR
                   </label>
-                  <input
+                  <input id="resources-f10"
                     type="text"
                     className="input-field"
                     value={newSecurityRule.source_cidr}
@@ -1955,10 +1955,10 @@ const Resources = () => {
                   />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1" htmlFor="resources-f11">
                     Action
                   </label>
-                  <select
+                  <select id="resources-f11"
                     className="input-field"
                     value={newSecurityRule.action}
                     onChange={(event) =>
@@ -1973,10 +1973,10 @@ const Resources = () => {
                   </select>
                 </div>
                 <div className="md:col-span-2 xl:col-span-6">
-                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1" htmlFor="resources-f12">
                     Description
                   </label>
-                  <input
+                  <input id="resources-f12"
                     type="text"
                     className="input-field"
                     value={newSecurityRule.description}
@@ -2012,10 +2012,10 @@ const Resources = () => {
             >
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1" htmlFor="resources-f13">
                     Direction
                   </label>
-                  <select
+                  <select id="resources-f13"
                     className="input-field"
                     value={editingSecurityRule.direction}
                     onChange={(event) =>
@@ -2030,10 +2030,10 @@ const Resources = () => {
                   </select>
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1" htmlFor="resources-f14">
                     Action
                   </label>
-                  <select
+                  <select id="resources-f14"
                     className="input-field"
                     value={editingSecurityRule.action}
                     onChange={(event) =>
@@ -2050,10 +2050,10 @@ const Resources = () => {
               </div>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1" htmlFor="resources-f15">
                     Protocol
                   </label>
-                  <select
+                  <select id="resources-f15"
                     className="input-field"
                     value={editingSecurityRule.protocol}
                     onChange={(event) =>
@@ -2070,10 +2070,10 @@ const Resources = () => {
                   </select>
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1" htmlFor="resources-f16">
                     Port Range
                   </label>
-                  <input
+                  <input id="resources-f16"
                     className="input-field"
                     value={editingSecurityRule.port_range}
                     onChange={(event) =>
@@ -2086,10 +2086,10 @@ const Resources = () => {
                 </div>
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1" htmlFor="resources-f17">
                   Source CIDR
                 </label>
-                <input
+                <input id="resources-f17"
                   className="input-field"
                   value={editingSecurityRule.source_cidr}
                   onChange={(event) =>
@@ -2101,10 +2101,10 @@ const Resources = () => {
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1" htmlFor="resources-f18">
                   Description
                 </label>
-                <input
+                <input id="resources-f18"
                   className="input-field"
                   value={editingSecurityRule.description || ""}
                   onChange={(event) =>
@@ -2149,10 +2149,10 @@ const Resources = () => {
             </h2>
             <form onSubmit={handleCreateResource} className="space-y-4">
               <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1" htmlFor="resources-f19">
                   {createMode === "database" ? "Database Name" : "VM Name"}
                 </label>
-                <input
+                <input id="resources-f19"
                   type="text"
                   className="input-field"
                   value={newVM?.name || ""}
@@ -2168,10 +2168,10 @@ const Resources = () => {
               </div>
               {createMode === "database" ? (
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1" htmlFor="resources-f20">
                     Engine
                   </label>
-                  <select
+                  <select id="resources-f20"
                     className="input-field"
                     value={newVM?.engine || "PostgreSQL"}
                     onChange={(event) =>
@@ -2186,10 +2186,10 @@ const Resources = () => {
               ) : (
                 <>
                   <div>
-                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1" htmlFor="resources-f21">
                       VM Size
                     </label>
-                    <select
+                    <select id="resources-f21"
                       className="input-field"
                       value={newVM?.instance_type || "t2.micro"}
                       onChange={(event) =>
@@ -2210,10 +2210,10 @@ const Resources = () => {
                   </div>
                   <div className="flex space-x-4">
                     <div className="flex-1">
-                      <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                      <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1" htmlFor="resources-f22">
                         CPU
                       </label>
-                      <input
+                      <input id="resources-f22"
                         type="text"
                         className="input-field bg-gray-100 dark:bg-gray-700 text-gray-500 cursor-not-allowed"
                         disabled
@@ -2228,10 +2228,10 @@ const Resources = () => {
                       />
                     </div>
                     <div className="flex-1">
-                      <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                      <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1" htmlFor="resources-f23">
                         Memory
                       </label>
-                      <input
+                      <input id="resources-f23"
                         type="text"
                         className="input-field bg-gray-100 dark:bg-gray-700 text-gray-500 cursor-not-allowed"
                         disabled
@@ -2250,10 +2250,10 @@ const Resources = () => {
                     </div>
                   </div>
                   <div>
-                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                    <span id="vm-security-groups-label" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
                       Security Groups
-                    </label>
-                    <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
+                    </span>
+                    <div role="group" aria-labelledby="vm-security-groups-label" className="space-y-2 max-h-48 overflow-y-auto pr-1">
                       {securityGroups.map((group) => {
                         const checked = selectedSecurityGroupIds.includes(
                           group.id,

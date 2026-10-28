@@ -69,10 +69,10 @@ const ResetPassword = () => {
           ) : (
             <form onSubmit={handleSubmit} className="space-y-4">
               <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1" htmlFor="resetpassword-f1">
                   New Password
                 </label>
-                <input
+                <input id="resetpassword-f1"
                   type="password"
                   required
                   className="input-field"
@@ -83,10 +83,10 @@ const ResetPassword = () => {
                 <p className="text-xs text-gray-500 mt-1">Must contain uppercase, lowercase, and number</p>
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1" htmlFor="resetpassword-f2">
                   Confirm Password
                 </label>
-                <input
+                <input id="resetpassword-f2"
                   type="password"
                   required
                   className="input-field"

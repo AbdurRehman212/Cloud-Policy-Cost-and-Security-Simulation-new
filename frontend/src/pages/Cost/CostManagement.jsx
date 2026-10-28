@@ -211,7 +211,7 @@ const CostManagement = () => {
             ${forecast?.total_predicted?.toFixed(2) || "0.00"}
           </p>
           {forecast?.note && (
-            <p className="mt-1 text-xs text-amber-600 dark:text-amber-400">
+            <p className="mt-1 text-xs text-amber-700 dark:text-amber-400">
               {forecast.note}
             </p>
           )}
@@ -273,10 +273,10 @@ const CostManagement = () => {
             </div>
             <form className="space-y-4" onSubmit={handleCreateBudget}>
               <div>
-                <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">
+                <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300" htmlFor="costmanagement-f1">
                   Budget Name
                 </label>
-                <input
+                <input id="costmanagement-f1"
                   className="input-field"
                   value={budgetForm.name}
                   onChange={(event) =>
@@ -286,10 +286,10 @@ const CostManagement = () => {
               </div>
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                 <div>
-                  <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">
+                  <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300" htmlFor="costmanagement-f2">
                     Amount
                   </label>
-                  <input
+                  <input id="costmanagement-f2"
                     type="number"
                     min="0"
                     step="0.01"
@@ -304,10 +304,10 @@ const CostManagement = () => {
                   />
                 </div>
                 <div>
-                  <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">
+                  <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300" htmlFor="costmanagement-f3">
                     Start Date
                   </label>
-                  <input
+                  <input id="costmanagement-f3"
                     type="date"
                     className="input-field"
                     value={budgetForm.start_date}
@@ -322,10 +322,10 @@ const CostManagement = () => {
               </div>
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
                 <div>
-                  <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">
+                  <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300" htmlFor="costmanagement-f4">
                     Warning %
                   </label>
-                  <input
+                  <input id="costmanagement-f4"
                     type="number"
                     className="input-field"
                     value={budgetForm.alert_threshold_1}
@@ -338,10 +338,10 @@ const CostManagement = () => {
                   />
                 </div>
                 <div>
-                  <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">
+                  <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300" htmlFor="costmanagement-f5">
                     Critical %
                   </label>
-                  <input
+                  <input id="costmanagement-f5"
                     type="number"
                     className="input-field"
                     value={budgetForm.alert_threshold_2}
@@ -354,10 +354,10 @@ const CostManagement = () => {
                   />
                 </div>
                 <div>
-                  <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">
+                  <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300" htmlFor="costmanagement-f6">
                     Exceeded %
                   </label>
-                  <input
+                  <input id="costmanagement-f6"
                     type="number"
                     className="input-field"
                     value={budgetForm.alert_threshold_3}

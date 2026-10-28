@@ -61,6 +61,9 @@ const Layout = () => {
   return (
     <TourProvider>
     <div className="min-h-screen bg-gray-50 dark:bg-gray-900 flex">
+      <a href="#main-content" className="sr-only focus:not-sr-only focus:fixed focus:left-3 focus:top-3 focus:z-[10002] focus:rounded-lg focus:bg-white focus:px-4 focus:py-2 focus:text-sm focus:font-medium focus:text-primary-700 focus:shadow-lg">
+        Skip to main content
+      </a>
       <Sidebar open={sidebarOpen} onClose={() => setSidebarOpen(false)} />
       <div className="flex-1 flex flex-col min-w-0 lg:ml-64">
         <Header onMenuClick={() => setSidebarOpen(true)} />
@@ -74,7 +77,7 @@ const Layout = () => {
             </p>
           </div>
         )}
-        <main className="flex-1 p-4 sm:p-6 overflow-auto">
+        <main id="main-content" tabIndex={-1} className="flex-1 p-4 sm:p-6 overflow-auto focus:outline-none">
           <Outlet />
         </main>
       </div>

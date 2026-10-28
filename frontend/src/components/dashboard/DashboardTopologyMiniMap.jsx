@@ -321,7 +321,7 @@ export default function DashboardTopologyMiniMap({ topologyMap = {}, snapshotAge
 function DetailChip({ label, value }) {
   return (
     <div className="rounded-xl bg-white px-3 py-2 shadow-sm dark:bg-gray-900/70">
-      <p className="text-[10px] font-semibold uppercase tracking-wide text-gray-400 dark:text-gray-500">{label}</p>
+      <p className="text-[10px] font-semibold uppercase tracking-wide text-gray-600 dark:text-gray-400">{label}</p>
       <p className="mt-0.5 text-sm font-medium text-gray-900 dark:text-white">{formatDetailValue(value)}</p>
     </div>
   );
@@ -330,7 +330,7 @@ function DetailChip({ label, value }) {
 function MiniMetric({ label, value }) {
   return (
     <div className="rounded-xl bg-white px-3 py-2 shadow-sm dark:bg-gray-900/70">
-      <p className="text-[10px] font-semibold uppercase tracking-wide text-gray-400 dark:text-gray-500">{label}</p>
+      <p className="text-[10px] font-semibold uppercase tracking-wide text-gray-600 dark:text-gray-400">{label}</p>
       <p className="mt-0.5 text-sm font-semibold text-gray-900 dark:text-white">{value}</p>
     </div>
   );

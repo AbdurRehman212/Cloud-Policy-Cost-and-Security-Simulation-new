@@ -80,24 +80,6 @@ const Sidebar = ({ open = false, onClose = () => {} }) => {
           </NavLink>
         ))}
       </nav>
-      <div className="p-4 border-t border-gray-200 dark:border-gray-700">
-        <div className="flex items-center space-x-3">
-          <div className="w-8 h-8 rounded-full bg-primary-100 dark:bg-primary-900 flex items-center justify-center">
-            <span className="text-sm font-medium text-primary-600 dark:text-primary-400">
-              AI
-            </span>
-          </div>
-          <div className="flex-1">
-            <p className="text-sm font-medium text-gray-900 dark:text-white">
-              Help Assistant
-            </p>
-            <p className="text-xs text-gray-500 dark:text-gray-400">
-              Rule-based answers
-            </p>
-          </div>
-          <div className="w-2 h-2 bg-success-500 rounded-full animate-pulse"></div>
-        </div>
-      </div>
     </div>
     </>
   );

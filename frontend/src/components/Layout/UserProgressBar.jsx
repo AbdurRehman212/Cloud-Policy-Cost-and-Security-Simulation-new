@@ -56,7 +56,7 @@ const UserProgressBar = () => {
         <div className="flex items-center gap-2">
           <div className="h-1.5 w-24 rounded-full bg-gray-300 dark:bg-gray-600">
             <div
-              className="h-1.5 rounded-full bg-primary-500 transition-all"
+              className="h-1.5 rounded-full bg-primary-500 transition"
               style={{ width: `${xpProgress}%` }}
             />
           </div>

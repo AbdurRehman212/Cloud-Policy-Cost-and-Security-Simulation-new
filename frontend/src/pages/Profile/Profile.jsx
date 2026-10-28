@@ -150,7 +150,7 @@ export default function Profile() {
             {user.first_name} {user.last_name}
           </h1>
           <p className="text-sm text-gray-500 dark:text-gray-400">{user.email}</p>
-          <p className="mt-1 text-xs text-gray-400 dark:text-gray-500">
+          <p className="mt-1 text-xs text-gray-600 dark:text-gray-400">
             Member since{" "}
             {user.created_at
               ? new Date(user.created_at).toLocaleDateString()
@@ -233,7 +233,7 @@ export default function Profile() {
               })}
               {organizations.length === 0 && (
                 <tr>
-                  <td colSpan={3} className="py-4 text-sm text-gray-400 dark:text-gray-500">
+                  <td colSpan={3} className="py-4 text-sm text-gray-600 dark:text-gray-400">
                     No organizations found.
                   </td>
                 </tr>
@@ -250,10 +250,10 @@ export default function Profile() {
         </h2>
         <form onSubmit={handleSaveProfile} className="space-y-4 max-w-md">
           <div>
-            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1" htmlFor="profile-f1">
               Display Name
             </label>
-            <input
+            <input id="profile-f1"
               type="text"
               value={displayName}
               onChange={(e) => setDisplayName(e.target.value)}
@@ -261,10 +261,10 @@ export default function Profile() {
             />
           </div>
           <div>
-            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1" htmlFor="profile-f2">
               Timezone
             </label>
-            <select
+            <select id="profile-f2"
               value={timezone}
               onChange={(e) => setTimezone(e.target.value)}
               className="input-field w-full"
@@ -314,11 +314,11 @@ export default function Profile() {
             },
           ].map(({ label, value, setter, show, toggle }) => (
             <div key={label}>
-              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1" htmlFor={`profile-pw-${label.replace(/\s+/g, "-").toLowerCase()}`}>
                 {label}
               </label>
               <div className="relative">
-                <input
+                <input id={`profile-pw-${label.replace(/\s+/g, "-").toLowerCase()}`}
                   type={show ? "text" : "password"}
                   value={value}
                   onChange={(e) => setter(e.target.value)}
@@ -328,7 +328,8 @@ export default function Profile() {
                 <button
                   type="button"
                   onClick={toggle}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+                  aria-label={show ? `Hide ${label}` : `Show ${label}`}
+                  className="absolute right-1 top-1/2 -translate-y-1/2 rounded p-2 text-gray-600 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-200"
                 >
                   {show ? (
                     <EyeSlashIcon className="h-5 w-5" />

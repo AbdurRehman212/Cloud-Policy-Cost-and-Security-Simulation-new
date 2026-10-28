@@ -124,6 +124,7 @@ export const TOUR_STEPS = [
     id: 'compliance',
     route: '/governance',
     target: 'run-compliance',
+    minRole: 'member',
     module: 'Module 7 · Policy Engine',
     title: 'Check compliance',
     text:

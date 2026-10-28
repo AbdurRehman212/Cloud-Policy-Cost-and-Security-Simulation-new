@@ -81,9 +81,12 @@ export function TourProvider({ children }) {
   const stepsRef = useRef([]);
   const runRef = useRef(0);
   const userIdRef = useRef(null);
+  const roleRef = useRef(null);
+  const pendingStartRef = useRef(null); // a start requested before the user/role finished loading
   const offeredRef = useRef(null);
   pathRef.current = pathname;
   userIdRef.current = user?.id ?? null;
+  roleRef.current = role;
 
   const teardown = useCallback(() => {
     runRef.current += 1;
@@ -146,7 +149,11 @@ export function TourProvider({ children }) {
 
   const startTour = useCallback(
     (fromIndex = 0) => {
-      if (!userIdRef.current) return;
+      if (!userIdRef.current || !roleRef.current) {
+        pendingStartRef.current = fromIndex; // e.g. Help clicked right after a reload: start once loaded
+        return;
+      }
+      pendingStartRef.current = null;
       teardown();
       setWelcomeOpen(false);
       const rank = ROLE_RANK[role] ?? ROLE_RANK.member;
@@ -204,6 +211,11 @@ export function TourProvider({ children }) {
   // Offer the tour once to new accounts, or resume an in-progress tour after a page reload.
   useEffect(() => {
     if (!user?.id || !role) return;
+    if (pendingStartRef.current !== null) {
+      offeredRef.current = user.id; // they chose the tour themselves: do not also show the welcome dialog
+      startTour(pendingStartRef.current);
+      return;
+    }
     if (offeredRef.current === user.id) return;
     offeredRef.current = user.id;
     const resumeAt = readActive(user.id);

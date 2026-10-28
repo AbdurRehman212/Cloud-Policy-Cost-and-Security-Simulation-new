@@ -115,7 +115,7 @@ const Membership = () => {
           Current plan: <span className="font-semibold">{currentPlan.toUpperCase()}</span>
         </p>
         {apiWarning ? (
-          <p className="text-sm text-amber-600 dark:text-amber-400 mt-2">{apiWarning}</p>
+          <p className="text-sm text-amber-700 dark:text-amber-400 mt-2">{apiWarning}</p>
         ) : null}
       </div>
 

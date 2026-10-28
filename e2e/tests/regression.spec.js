@@ -49,6 +49,10 @@ test('M2 default organization is created with the owner role', async () => {
   await expect(page.getByRole('button', { name: /Cloud Workspace.*owner/i })).toBeVisible();
 });
 
+test('dashboard realtime stream connects (shows Live, not Reconnecting)', async () => {
+  await expect(page.getByText('Live', { exact: true })).toBeVisible({ timeout: 20_000 });
+});
+
 test('M4/M5 creates a VM and shows its live metrics', async () => {
   await goto('/resources');
   await page.getByRole('button', { name: 'Create VM' }).first().click();

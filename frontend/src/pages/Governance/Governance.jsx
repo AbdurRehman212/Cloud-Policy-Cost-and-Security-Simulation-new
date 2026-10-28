@@ -233,7 +233,8 @@ const Governance = () => {
           <button
             onClick={runComplianceCheck}
             data-tour="run-compliance"
-            disabled={!orgId || runningCheck}
+            disabled={!orgId || runningCheck || currentOrganization?.my_role === "viewer"}
+            title={currentOrganization?.my_role === "viewer" ? "Viewers cannot run compliance checks" : undefined}
             className="btn-secondary flex items-center space-x-2 disabled:opacity-50"
           >
             <ShieldCheckIcon className="w-5 h-5" />
@@ -567,10 +568,10 @@ const Governance = () => {
             </h2>
             <form onSubmit={handleCreatePolicy} className="space-y-4">
               <div>
-                <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">
+                <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300" htmlFor="governance-f1">
                   Policy Name
                 </label>
-                <input
+                <input id="governance-f1"
                   type="text"
                   required
                   className="input-field"
@@ -582,10 +583,10 @@ const Governance = () => {
                 />
               </div>
               <div>
-                <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">
+                <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300" htmlFor="governance-f2">
                   Description
                 </label>
-                <textarea
+                <textarea id="governance-f2"
                   className="input-field"
                   rows="2"
                   value={newPolicy.description}
@@ -596,10 +597,10 @@ const Governance = () => {
                 />
               </div>
               <div>
-                <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">
+                <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300" htmlFor="governance-f3">
                   Policy Rule
                 </label>
-                <textarea
+                <textarea id="governance-f3"
                   required
                   className="input-field"
                   rows="4"

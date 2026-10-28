@@ -60,10 +60,10 @@ const Login = () => {
           </div>
           <form onSubmit={handleSubmit} className="space-y-4">
             <div>
-              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1" htmlFor="login-f1">
                 Email Address
               </label>
-              <input
+              <input id="login-f1"
                 type="email"
                 required
                 className="input-field"
@@ -73,10 +73,10 @@ const Login = () => {
               />
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1" htmlFor="login-f2">
                 Password
               </label>
-              <input
+              <input id="login-f2"
                 type="password"
                 required
                 className="input-field"

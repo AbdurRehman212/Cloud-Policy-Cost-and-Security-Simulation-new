@@ -219,10 +219,10 @@ const Settings = () => {
               <h2 className="text-lg font-semibold text-gray-900 dark:text-white">Profile</h2>
               <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
                 <div>
-                  <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">
+                  <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300" htmlFor="settings-f1">
                     First Name
                   </label>
-                  <input
+                  <input id="settings-f1"
                     type="text"
                     className="input-field"
                     value={profileForm.first_name}
@@ -232,10 +232,10 @@ const Settings = () => {
                   />
                 </div>
                 <div>
-                  <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">
+                  <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300" htmlFor="settings-f2">
                     Last Name
                   </label>
-                  <input
+                  <input id="settings-f2"
                     type="text"
                     className="input-field"
                     value={profileForm.last_name}
@@ -245,10 +245,10 @@ const Settings = () => {
                   />
                 </div>
                 <div className="md:col-span-2">
-                  <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">
+                  <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300" htmlFor="settings-f3">
                     Email
                   </label>
-                  <input type="email" className="input-field" value={user?.email || ""} disabled />
+                  <input id="settings-f3" type="email" className="input-field" value={user?.email || ""} disabled />
                 </div>
               </div>
               <div className="flex justify-end">
@@ -269,10 +269,10 @@ const Settings = () => {
                 Dashboard Preferences
               </h2>
               <div>
-                <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">
+                <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300" htmlFor="settings-f4">
                   Default Dashboard View
                 </label>
-                <select
+                <select id="settings-f4"
                   className="input-field"
                   value={settings.dashboard?.default_view || "overview"}
                   onChange={(event) =>
@@ -358,10 +358,10 @@ const Settings = () => {
               <h2 className="text-lg font-semibold text-gray-900 dark:text-white">Appearance</h2>
               <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
                 <div>
-                  <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">
+                  <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300" htmlFor="settings-f5">
                     Theme
                   </label>
-                  <select
+                  <select id="settings-f5"
                     className="input-field"
                     value={settings.appearance?.theme || "light"}
                     onChange={(event) =>
@@ -379,10 +379,10 @@ const Settings = () => {
                   </select>
                 </div>
                 <div>
-                  <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">
+                  <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300" htmlFor="settings-f6">
                     Timezone
                   </label>
-                  <select
+                  <select id="settings-f6"
                     className="input-field"
                     value={settings.appearance?.timezone || "UTC"}
                     onChange={(event) =>
@@ -495,10 +495,10 @@ const Settings = () => {
               </div>
 
               <div>
-                <label className="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300">
+                <label className="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300" htmlFor="settings-f7">
                   Cost Alert Threshold (%)
                 </label>
-                <input
+                <input id="settings-f7"
                   type="range"
                   min="50"
                   max="100"
@@ -601,10 +601,10 @@ const Settings = () => {
                 </label>
 
                 <div>
-                  <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">
+                  <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300" htmlFor="settings-f8">
                     Session Timeout
                   </label>
-                  <select
+                  <select id="settings-f8"
                     className="input-field w-48"
                     value={settings.security?.session_timeout || 30}
                     onChange={(event) =>

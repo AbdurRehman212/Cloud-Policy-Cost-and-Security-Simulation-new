@@ -213,7 +213,7 @@ export default function NetworkTopology() {
             </div>
             <div className="mt-4 space-y-2">
               <div className="rounded-lg border border-gray-100 bg-gray-50 px-3 py-2 dark:border-gray-700 dark:bg-gray-700/50">
-                <p className="text-xs font-semibold uppercase tracking-wide text-gray-400 dark:text-gray-500">
+                <p className="text-xs font-semibold uppercase tracking-wide text-gray-600 dark:text-gray-400">
                   AWS Equivalent
                 </p>
                 <p className="mt-0.5 text-sm font-medium text-gray-800 dark:text-gray-200">
@@ -221,7 +221,7 @@ export default function NetworkTopology() {
                 </p>
               </div>
               <div className="rounded-lg border border-gray-100 bg-gray-50 px-3 py-2 dark:border-gray-700 dark:bg-gray-700/50">
-                <p className="text-xs font-semibold uppercase tracking-wide text-gray-400 dark:text-gray-500">
+                <p className="text-xs font-semibold uppercase tracking-wide text-gray-600 dark:text-gray-400">
                   Azure Equivalent
                 </p>
                 <p className="mt-0.5 text-sm font-medium text-gray-800 dark:text-gray-200">
@@ -293,7 +293,7 @@ function SubnetCard({ subnet, type, fallbackName, fallbackCidr, fallbackAz }) {
 
       <div className="divide-y divide-gray-100 dark:divide-gray-700 px-5 py-3">
         {vms.length === 0 && dbs.length === 0 ? (
-          <p className="py-3 text-sm text-gray-400 dark:text-gray-500">
+          <p className="py-3 text-sm text-gray-600 dark:text-gray-400">
             No resources in this subnet
           </p>
         ) : (
@@ -339,10 +339,10 @@ function ResourceRow({ icon, name, status, detail, ip }) {
         </span>
       )}
       {detail && (
-        <span className="shrink-0 text-xs text-gray-400 dark:text-gray-500">{detail}</span>
+        <span className="shrink-0 text-xs text-gray-600 dark:text-gray-400">{detail}</span>
       )}
       {ip && (
-        <span className="shrink-0 font-mono text-xs text-gray-400 dark:text-gray-500">{ip}</span>
+        <span className="shrink-0 font-mono text-xs text-gray-600 dark:text-gray-400">{ip}</span>
       )}
     </div>
   );

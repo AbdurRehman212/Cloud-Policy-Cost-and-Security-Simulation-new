@@ -300,7 +300,7 @@ const Security = () => {
               </p>
               {securityScore === null ? (
                 <p className="text-lg font-semibold text-gray-500 dark:text-gray-400">
-                  Awaiting backend data
+                  Not available yet
                 </p>
               ) : (
                 <p className="text-3xl font-bold text-success-600">{securityScore}/100</p>
@@ -309,7 +309,7 @@ const Security = () => {
             <ShieldCheckIcon className="w-12 h-12 text-success-500" />
           </div>
           <p className="mt-2 text-xs text-gray-500 dark:text-gray-400">
-            Source: {securityScoreSource === "dashboard-summary" ? "dashboard snapshot" : "backend pending"}
+            {securityScoreSource === "dashboard-summary" ? "Taken from the dashboard snapshot." : "Shown once security data exists for this organization."}
           </p>
         </div>
         <div className="card">
@@ -338,7 +338,7 @@ const Security = () => {
             <ShieldCheckIcon className="w-12 h-12 text-primary-500" />
           </div>
           <p className="mt-2 text-xs text-gray-500 dark:text-gray-400">
-            Backend-acknowledged threat history.
+            Threats that were marked as resolved.
           </p>
         </div>
       </div>
@@ -360,7 +360,7 @@ const Security = () => {
               Alert Rules
             </h3>
             <p className="text-sm text-gray-500 dark:text-gray-400">
-              Backend-owned rules applied to newly persisted threats in this organization.
+              Rules that run automatically whenever a new threat is recorded for this organization.
             </p>
           </div>
           {alertRulesLoading && (
@@ -380,6 +380,7 @@ const Security = () => {
           <form className="mb-6 grid grid-cols-1 gap-3 md:grid-cols-5" onSubmit={handleCreateAlertRule}>
             <input
               className="input-field md:col-span-2"
+              aria-label="Rule name"
               value={ruleDraft.name}
               onChange={(event) =>
                 setRuleDraft((current) => ({ ...current, name: event.target.value }))
@@ -389,6 +390,7 @@ const Security = () => {
             />
             <select
               className="input-field"
+              aria-label="Condition field"
               value={ruleDraft.conditionField}
               onChange={(event) =>
                 setRuleDraft((current) => ({
@@ -411,6 +413,7 @@ const Security = () => {
             </select>
             <select
               className="input-field"
+              aria-label="Condition operator"
               value={ruleDraft.conditionOperator}
               onChange={(event) =>
                 setRuleDraft((current) => ({ ...current, conditionOperator: event.target.value }))
@@ -431,6 +434,7 @@ const Security = () => {
             </select>
             <input
               className="input-field"
+              aria-label="Condition value"
               value={ruleDraft.conditionValue}
               onChange={(event) =>
                 setRuleDraft((current) => ({ ...current, conditionValue: event.target.value }))
@@ -440,6 +444,7 @@ const Security = () => {
             />
             <select
               className="input-field md:col-span-2"
+              aria-label="Rule action"
               value={ruleDraft.actionType}
               onChange={(event) =>
                 setRuleDraft((current) => ({ ...current, actionType: event.target.value }))
@@ -543,7 +548,7 @@ const Security = () => {
             </span>
           )}
         </div>
-        <div className="overflow-x-auto">
+        <div className="overflow-x-auto" tabIndex={0} role="region" aria-label="Detected threats table">
           <table className="w-full">
             <thead className="bg-gray-50 dark:bg-gray-700">
               <tr>
@@ -720,10 +725,10 @@ const Security = () => {
             </p>
             <div className="space-y-4">
               <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1" htmlFor="security-f1">
                   Attack Type
                 </label>
-                <select
+                <select id="security-f1"
                   className="input-field"
                   value={attackType}
                   onChange={(e) => setAttackType(e.target.value)}

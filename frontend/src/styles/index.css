@@ -18,18 +18,18 @@
   /* Buttons */
   .btn-primary {
     @apply inline-flex items-center gap-2 px-4 py-2 bg-primary-600 text-white rounded-lg
-           hover:bg-primary-700 transition-all duration-200 font-medium
+           hover:bg-primary-700 transition duration-200 font-medium
            active:scale-95 disabled:opacity-50 disabled:pointer-events-none;
   }
   .btn-secondary {
     @apply inline-flex items-center gap-2 px-4 py-2 bg-gray-100 text-gray-700 rounded-lg
-           hover:bg-gray-200 transition-all duration-200 font-medium
+           hover:bg-gray-200 transition duration-200 font-medium
            dark:bg-gray-700 dark:text-gray-200 dark:hover:bg-gray-600
            active:scale-95 disabled:opacity-50 disabled:pointer-events-none;
   }
   .btn-danger {
     @apply inline-flex items-center gap-2 px-4 py-2 bg-danger-600 text-white rounded-lg
-           hover:bg-danger-700 transition-all duration-200 font-medium
+           hover:bg-danger-700 transition duration-200 font-medium
            active:scale-95 disabled:opacity-50 disabled:pointer-events-none;
   }
 
@@ -59,7 +59,7 @@
            text-gray-600 dark:text-gray-300
            hover:bg-gray-100 hover:text-primary-700
            dark:hover:bg-gray-700/50 dark:hover:text-primary-300
-           transition-all duration-150;
+           transition duration-150;
   }
   .sidebar-link.active {
     @apply bg-primary-50 text-primary-700 font-semibold
@@ -76,7 +76,7 @@
   .status-warning  { @apply bg-amber-50    text-amber-700    dark:bg-amber-900/20    dark:text-amber-400; }
 
   /* Section typography helpers */
-  .section-label { @apply text-[10px] font-bold uppercase tracking-[0.14em] text-gray-400 dark:text-gray-500; }
+  .section-label { @apply text-[10px] font-bold uppercase tracking-[0.14em] text-gray-600 dark:text-gray-400; }
   .section-title { @apply text-base font-semibold text-gray-900 dark:text-white; }
   .section-sub   { @apply text-xs text-gray-500 dark:text-gray-400 mt-0.5 leading-relaxed; }
 }

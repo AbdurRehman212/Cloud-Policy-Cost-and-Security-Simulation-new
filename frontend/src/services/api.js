@@ -78,7 +78,12 @@ export const createSocket = (namespace = '') => {
     delete window._socketInstances[ns];
   }
 
-  const socket = io(ns, {
+  // The CRA dev proxy does not forward Socket.IO reliably, so in development (port 3000) connect to
+  // the backend directly. Production serves frontend and API from one origin, so a relative path is used.
+  const origin =
+    process.env.REACT_APP_SOCKET_URL ||
+    (window.location.port === '3000' ? `${window.location.protocol}//${window.location.hostname}:5000` : '');
+  const socket = io(`${origin}${ns}`, {
     transports: ['websocket', 'polling'],
     autoConnect: true,
     auth: {
