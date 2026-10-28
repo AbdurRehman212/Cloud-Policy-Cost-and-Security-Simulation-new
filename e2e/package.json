@@ -1,6 +1,11 @@
 {
   "name": "fyp-e2e",
   "private": true,
-  "scripts": { "test": "playwright test" },
-  "devDependencies": { "@playwright/test": "1.55.0" }
+  "scripts": {
+    "test": "playwright test"
+  },
+  "devDependencies": {
+    "@axe-core/playwright": "^4.10.2",
+    "@playwright/test": "1.55.0"
+  }
 }
