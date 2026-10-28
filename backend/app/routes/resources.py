@@ -3,6 +3,7 @@ from flask import current_app
 from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from app import db, socketio
+from app.utils.rbac import active_membership
 from app.services.learning_context_engine import learning_context_service
 from app.services.operational_event_service import operational_event_service
 from app.models.resources import (
@@ -190,8 +191,9 @@ def _ensure_org_membership(user_id):
         .order_by(OrganizationMember.joined_at.asc(), OrganizationMember.id.asc())
         .all()
     )
-    if memberships:
-        return {m.organization_id for m in memberships}
+    allowed = {m.organization_id for m in memberships if active_membership(user_id, m.organization_id)}
+    if allowed:
+        return allowed
 
     return set()
 
@@ -208,6 +210,15 @@ def _resolve_org_id_for_user(user_id, preferred_org_id=None):
     if preferred_org_id in allowed:
         return preferred_org_id
     return sorted(allowed)[0]
+
+
+def _requested_org_denied(user_id, requested_org_id):
+    """True when a request names an org the caller is not a member of."""
+    try:
+        requested = int(requested_org_id)
+    except (TypeError, ValueError):
+        return False
+    return requested not in _ensure_org_membership(user_id)
 
 
 def _resolve_request_org_id(user_id):
@@ -232,6 +243,10 @@ def check_org_access(user_id, org_id, min_role='member'):
         organization_id=org_id, user_id=user_id
     ).first()
     if not member:
+        return None
+    from app.models.organization import Organization
+    org = Organization.query.get(org_id)
+    if org is None or org.is_active is False:  # soft-deleted organizations grant no access
         return None
     role_hierarchy = {'viewer': 1, 'member': 2, 'admin': 3, 'owner': 4}
     if role_hierarchy.get(member.role, 0) < role_hierarchy.get(min_role, 2):
@@ -569,7 +584,9 @@ def _provision_vm_record(org_id, data):
         return None, _error(f'Quota exceeded: maximum {resource_limit} resources per organization', status_code=400)
 
     instance_type = data.get('instance_type', 't2.micro')
-    spec = INSTANCE_TYPES.get(instance_type, INSTANCE_TYPES['t2.micro'])
+    if instance_type not in INSTANCE_TYPES:
+        return None, _error(f"Invalid instance_type. Choose one of: {', '.join(INSTANCE_TYPES)}", status_code=400)
+    spec = INSTANCE_TYPES[instance_type]
     name = (data.get('name') or '').strip() or f"VM-{generate_instance_id('i')[:8]}"
     _ensure_default_security_groups(org_id)
 
@@ -649,6 +666,8 @@ def _provision_database_record(org_id, data):
 def list_vpcs():
     """List VPCs with nested subnets for the org."""
     user_id = get_jwt_identity()
+    if _requested_org_denied(user_id, request.args.get('organization_id', type=int)):
+        return _error('Access denied', status_code=403, code='forbidden')
     org_id = _resolve_org_id_for_user(user_id, request.args.get('organization_id', type=int))
     if org_id is None:
         return _success([])
@@ -663,6 +682,8 @@ def list_vpcs():
 def network_topology():
     """Return full VPC → Subnet → VM/DB map for the org."""
     user_id = get_jwt_identity()
+    if _requested_org_denied(user_id, request.args.get('organization_id', type=int)):
+        return _error('Access denied', status_code=403, code='forbidden')
     org_id = _resolve_org_id_for_user(user_id, request.args.get('organization_id', type=int))
     if org_id is None:
         return _success({'vpcs': []})
@@ -705,6 +726,8 @@ def list_resources():
     """Return all VMs and databases for the user's org."""
     user_id = get_jwt_identity()
     org_id_filter = request.args.get('organization_id', type=int)
+    if _requested_org_denied(user_id, org_id_filter):
+        return _error('Access denied', status_code=403, code='forbidden')
     org_id = _resolve_org_id_for_user(user_id, org_id_filter)
     if org_id is None:
         return _success([])
@@ -735,6 +758,8 @@ def create_resource():
     else:
         resource_type = 'vm'
 
+    if _requested_org_denied(user_id, data.get('org_id', data.get('organization_id'))):
+        return _error('Permission denied', status_code=403)
     org_id = _resolve_org_id_for_user(user_id, data.get('org_id', data.get('organization_id')))
     if org_id is None:
         org_id = 1
@@ -1370,6 +1395,8 @@ def create_vm():
     """Create virtual machine (delegates to create_resource)."""
     user_id = get_jwt_identity()
     data = request.get_json() or {}
+    if _requested_org_denied(user_id, data.get('organization_id', data.get('org_id'))):
+        return _error('Permission denied', status_code=403)
     org_id = _resolve_org_id_for_user(user_id, data.get('organization_id', data.get('org_id')))
     if org_id is None:
         return _error('organization_id required', status_code=400)
@@ -1821,6 +1848,8 @@ def create_database():
     """Create database instance."""
     user_id = get_jwt_identity()
     data = request.get_json() or {}
+    if _requested_org_denied(user_id, data.get('organization_id', data.get('org_id'))):
+        return _error('Permission denied', status_code=403)
     org_id = _resolve_org_id_for_user(user_id, data.get('organization_id', data.get('org_id')))
     if org_id is None:
         return _error('organization_id required', status_code=400)

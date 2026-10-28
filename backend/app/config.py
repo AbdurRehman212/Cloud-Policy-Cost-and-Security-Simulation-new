@@ -6,7 +6,8 @@ from dotenv import load_dotenv
 
 load_dotenv(override=True)
 
-PG_URL = 'postgresql://abdur:admin123@localhost/cloud_simulator'
+# Credential-free local default; set DATABASE_URL in backend/.env (git-ignored) with real credentials.
+PG_URL = 'postgresql://localhost/cloud_simulator'
 
 
 def _normalize_base_url(url, fallback):
@@ -63,6 +64,9 @@ class Config:
     MAX_SIMULATED_RESOURCES = int(os.environ.get('MAX_SIMULATED_RESOURCES', 100))
     DEFAULT_CURRENCY = os.environ.get('DEFAULT_CURRENCY', 'USD')
     ENABLE_SIMULATION_THREADS = os.environ.get('ENABLE_SIMULATION_THREADS', 'true').lower() == 'true'
+    # Destructive, system-wide reset endpoint. Off unless explicitly enabled for local development;
+    # scripts/reset_system.py is the supported way to reset a development database.
+    ALLOW_SYSTEM_RESET = os.environ.get('ALLOW_SYSTEM_RESET', 'false').lower() == 'true'
     ENABLE_REALTIME_METRICS = os.environ.get('ENABLE_REALTIME_METRICS', 'true').lower() == 'true'
     # Pricing (Simulated AWS-like pricing per hour)
     VM_PRICING = {
@@ -83,13 +87,15 @@ class Config:
     }
 class DevelopmentConfig(Config):
     DEBUG = True
-    SQLALCHEMY_DATABASE_URI = os.environ.get('DEV_DATABASE_URL') or PG_URL
+    SQLALCHEMY_DATABASE_URI = os.environ.get('DEV_DATABASE_URL') or os.environ.get('DATABASE_URL') or PG_URL
 class ProductionConfig(Config):
     DEBUG = False
     SQLALCHEMY_DATABASE_URI = os.environ.get('DATABASE_URL') or PG_URL
 class TestingConfig(Config):
     TESTING = True
-    SQLALCHEMY_DATABASE_URI = os.environ.get('TEST_DATABASE_URL') or PG_URL
+    SQLALCHEMY_DATABASE_URI = os.environ.get('TEST_DATABASE_URL') or 'sqlite://'
+    SQLALCHEMY_ENGINE_OPTIONS = {}
+    ENABLE_SIMULATION_THREADS = False
 config = {
     'development': DevelopmentConfig,
     'production': ProductionConfig,

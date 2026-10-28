@@ -55,10 +55,10 @@ const Register = () => {
           <form onSubmit={handleSubmit} className="space-y-4">
             <div className="grid grid-cols-2 gap-4">
               <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1" htmlFor="register-f1">
                   First Name
                 </label>
-                <input
+                <input id="register-f1"
                   type="text"
                   required
                   className="input-field"
@@ -67,10 +67,10 @@ const Register = () => {
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1" htmlFor="register-f2">
                   Last Name
                 </label>
-                <input
+                <input id="register-f2"
                   type="text"
                   required
                   className="input-field"
@@ -80,10 +80,10 @@ const Register = () => {
               </div>
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1" htmlFor="register-f3">
                 Email Address
               </label>
-              <input
+              <input id="register-f3"
                 type="email"
                 required
                 className="input-field"
@@ -93,10 +93,10 @@ const Register = () => {
               />
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1" htmlFor="register-f4">
                 Password
               </label>
-              <input
+              <input id="register-f4"
                 type="password"
                 required
                 className="input-field"
@@ -109,10 +109,10 @@ const Register = () => {
               </p>
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1" htmlFor="register-f5">
                 Confirm Password
               </label>
-              <input
+              <input id="register-f5"
                 type="password"
                 required
                 className="input-field"

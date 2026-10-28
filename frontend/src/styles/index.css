@@ -18,18 +18,18 @@
   /* Buttons */
   .btn-primary {
     @apply inline-flex items-center gap-2 px-4 py-2 bg-primary-600 text-white rounded-lg
-           hover:bg-primary-700 transition-all duration-200 font-medium
+           hover:bg-primary-700 transition duration-200 font-medium
            active:scale-95 disabled:opacity-50 disabled:pointer-events-none;
   }
   .btn-secondary {
     @apply inline-flex items-center gap-2 px-4 py-2 bg-gray-100 text-gray-700 rounded-lg
-           hover:bg-gray-200 transition-all duration-200 font-medium
+           hover:bg-gray-200 transition duration-200 font-medium
            dark:bg-gray-700 dark:text-gray-200 dark:hover:bg-gray-600
            active:scale-95 disabled:opacity-50 disabled:pointer-events-none;
   }
   .btn-danger {
     @apply inline-flex items-center gap-2 px-4 py-2 bg-danger-600 text-white rounded-lg
-           hover:bg-danger-700 transition-all duration-200 font-medium
+           hover:bg-danger-700 transition duration-200 font-medium
            active:scale-95 disabled:opacity-50 disabled:pointer-events-none;
   }
 
@@ -59,7 +59,7 @@
            text-gray-600 dark:text-gray-300
            hover:bg-gray-100 hover:text-primary-700
            dark:hover:bg-gray-700/50 dark:hover:text-primary-300
-           transition-all duration-150;
+           transition duration-150;
   }
   .sidebar-link.active {
     @apply bg-primary-50 text-primary-700 font-semibold
@@ -76,7 +76,7 @@
   .status-warning  { @apply bg-amber-50    text-amber-700    dark:bg-amber-900/20    dark:text-amber-400; }
 
   /* Section typography helpers */
-  .section-label { @apply text-[10px] font-bold uppercase tracking-[0.14em] text-gray-400 dark:text-gray-500; }
+  .section-label { @apply text-[10px] font-bold uppercase tracking-[0.14em] text-gray-600 dark:text-gray-400; }
   .section-title { @apply text-base font-semibold text-gray-900 dark:text-white; }
   .section-sub   { @apply text-xs text-gray-500 dark:text-gray-400 mt-0.5 leading-relaxed; }
 }
@@ -156,3 +156,30 @@
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: #d1d5db; border-radius: 9999px; }
 .dark ::-webkit-scrollbar-thumb { background: #4b5563; }
+
+/* ── Guided tour (driver.js popover) ──────────────────────── */
+.driver-popover.fyp-tour-popover {
+  max-width: min(92vw, 380px);
+  border-radius: 0.75rem;
+  padding: 1rem 1.1rem;
+  background: #fff;
+  color: #1f2937;
+}
+.fyp-tour-popover .driver-popover-title { font-size: 1.05rem; font-weight: 700; color: inherit; }
+.fyp-tour-popover .driver-popover-description { font-size: 0.9rem; line-height: 1.5; color: #4b5563; margin-top: 0.4rem; }
+.fyp-tour-popover .driver-popover-progress-text { font-size: 0.8rem; color: #4b5563; }
+.fyp-tour-popover .driver-popover-footer button {
+  font-size: 0.85rem; padding: 0.4rem 0.8rem; border-radius: 0.5rem;
+  text-shadow: none; background: #f3f4f6; color: #1f2937; border: 1px solid #d1d5db;
+}
+.fyp-tour-popover .driver-popover-footer .driver-popover-next-btn, .fyp-tour-popover .driver-popover-footer .driver-popover-done-btn { background: #2563eb; color: #fff; border-color: #2563eb; }
+.fyp-tour-popover .driver-popover-footer button:focus-visible { outline: 2px solid #2563eb; outline-offset: 2px; }
+.fyp-tour-module { font-size: 0.7rem; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; color: #2563eb; margin-bottom: 0.25rem; }
+.fyp-tour-end { margin-right: auto; background: transparent !important; border-color: transparent !important; color: #4b5563 !important; text-decoration: underline; }
+.dark .driver-popover.fyp-tour-popover { background: #1f2937; color: #f3f4f6; }
+.dark .fyp-tour-popover .driver-popover-description,
+.dark .fyp-tour-popover .driver-popover-progress-text,
+.dark .fyp-tour-end { color: #d1d5db !important; }
+.dark .fyp-tour-popover .driver-popover-footer button { background: #374151; color: #f3f4f6; border-color: #4b5563; }
+.dark .fyp-tour-popover .driver-popover-footer .driver-popover-next-btn, .dark .fyp-tour-popover .driver-popover-footer .driver-popover-done-btn { background: #2563eb; border-color: #2563eb; }
+.dark .fyp-tour-module { color: #93c5fd; }

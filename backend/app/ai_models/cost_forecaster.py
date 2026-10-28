@@ -10,13 +10,9 @@ import numpy as np
 import pandas as pd
 
 try:  # Optional dependency, used when available.
-    from sklearn.cluster import KMeans
     from sklearn.linear_model import LinearRegression
-    from sklearn.preprocessing import StandardScaler
 except Exception:  # pragma: no cover - optional dependency
-    KMeans = None
     LinearRegression = None
-    StandardScaler = None
 
 logger = logging.getLogger(__name__)
 
@@ -92,64 +88,54 @@ class CostForecaster:
             })
         return forecast
 
+    IDLE_CPU_PCT = 10.0
+    UNDERUSED_CPU_PCT = 30.0
+    UNDERUSED_MEMORY_PCT = 40.0
+    HOURS_PER_MONTH = 730
+
     def detect_wastage(self, vm_data: pd.DataFrame):
-        """Cluster simulated resources and identify wasteful idle instances."""
+        """Flag running resources with explainable utilization rules.
+
+        IDLE:          CPU < 10%                    -> stop/schedule, saves 100% of monthly cost
+        UNDERUTILIZED: CPU < 30% and memory < 40%   -> downsize,      saves  50% of monthly cost
+        Savings are estimates (hourly rate x 730h x saving fraction). Resources that are
+        not running are never flagged.
+        """
         if vm_data is None or vm_data.empty:
             return []
 
-        frame = vm_data.copy()
-        numeric_columns = ['cpu_utilization_avg', 'memory_utilization_avg', 'hourly_rate']
-        for column in numeric_columns:
-            if column not in frame.columns:
-                frame[column] = 0.0
-        features = frame[numeric_columns].fillna(0.0).astype(float)
-
-        if KMeans is None or len(frame) < 2:
-            return self._rule_based_wastage(frame)
-
-        cluster_count = min(3, len(frame))
-        scaler = StandardScaler() if StandardScaler is not None else None
-        scaled = scaler.fit_transform(features) if scaler is not None else features.to_numpy()
-        model = KMeans(n_clusters=cluster_count, random_state=42, n_init=10)
-        labels = model.fit_predict(scaled)
-        frame['cluster'] = labels
-
-        cluster_quality = (
-            frame.groupby('cluster')[['cpu_utilization_avg', 'memory_utilization_avg']]
-            .mean()
-            .sum(axis=1)
-        )
-        idle_cluster = cluster_quality.idxmin()
-
         recommendations = []
-        for _, row in frame[frame['cluster'] == idle_cluster].iterrows():
-            cpu = float(row['cpu_utilization_avg'])
-            memory = float(row['memory_utilization_avg'])
-            hourly_rate = float(row['hourly_rate'])
-            monthly_savings = round(hourly_rate * 730 * 0.25, 2)
-            if cpu < 30 or memory < 35:
-                recommendations.append({
-                    'instance_id': row.get('instance_id'),
-                    'recommendation': 'Consider downsizing or scheduling shutdowns',
-                    'potential_monthly_savings': monthly_savings,
-                    'cluster': int(idle_cluster),
-                    'reason': f'Low utilization detected (CPU {cpu:.1f}%, Memory {memory:.1f}%)',
-                })
-        return recommendations
+        for _, row in vm_data.iterrows():
+            if str(row.get('status', 'running')).lower() != 'running':
+                continue
+            cpu = float(row.get('cpu_utilization_avg') or 0.0)
+            memory = float(row.get('memory_utilization_avg') or 0.0)
+            monthly_cost = float(row.get('hourly_rate') or 0.0) * self.HOURS_PER_MONTH
 
-    def _rule_based_wastage(self, frame: pd.DataFrame):
-        recommendations = []
-        for _, row in frame.iterrows():
-            cpu = float(row.get('cpu_utilization_avg', 0))
-            memory = float(row.get('memory_utilization_avg', 0))
-            hourly_rate = float(row.get('hourly_rate', 0))
-            if cpu < 25 or memory < 30:
-                recommendations.append({
-                    'instance_id': row.get('instance_id'),
-                    'recommendation': 'Consider downsizing or scheduling shutdowns',
-                    'potential_monthly_savings': round(hourly_rate * 730 * 0.25, 2),
-                    'reason': f'Low utilization detected (CPU {cpu:.1f}%, Memory {memory:.1f}%)',
-                })
+            if cpu < self.IDLE_CPU_PCT:
+                rule, fraction = 'IDLE', 1.0
+                recommendation = 'Stop or schedule shutdown of this idle resource'
+                reason = f'CPU {cpu:.1f}% is below the idle threshold of {self.IDLE_CPU_PCT:.0f}%'
+            elif cpu < self.UNDERUSED_CPU_PCT and memory < self.UNDERUSED_MEMORY_PCT:
+                rule, fraction = 'UNDERUTILIZED', 0.5
+                recommendation = 'Consider downsizing to a smaller instance type'
+                reason = (
+                    f'CPU {cpu:.1f}% < {self.UNDERUSED_CPU_PCT:.0f}% and memory {memory:.1f}% '
+                    f'< {self.UNDERUSED_MEMORY_PCT:.0f}%'
+                )
+            else:
+                continue
+
+            recommendations.append({
+                'instance_id': row.get('instance_id'),
+                'resource_kind': row.get('resource_kind'),
+                'instance_type': row.get('instance_type'),
+                'rule': rule,
+                'recommendation': recommendation,
+                'reason': reason,
+                'potential_monthly_savings': round(monthly_cost * fraction, 2),
+                'estimated': True,
+            })
         return recommendations
 
     def _fallback_forecast(self, days_ahead: int, base_cost: float):

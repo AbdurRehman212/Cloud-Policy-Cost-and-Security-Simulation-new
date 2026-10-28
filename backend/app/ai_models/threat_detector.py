@@ -77,14 +77,15 @@ class ThreatDetector:
             'bytes_in',
             'bytes_out',
             'active_connections',
-            'cpu_utilization',
-            'memory_utilization',
             'disk_read_iops',
             'disk_write_iops',
             'network_in_mbps',
             'network_out_mbps',
-            'auth_failures',
         ]
+        # Only features that exist in the training data (derived from CICIDS flows, never from the
+        # label) are used, so the deployed inputs match the training inputs exactly.
+        self.model_info = {'version': 'heuristic', 'backend': 'heuristic', 'features': self.feature_columns}
+        self.version = 'heuristic'
         self._train_if_possible()
 
     def _training_frame(self) -> pd.DataFrame:
@@ -109,6 +110,7 @@ class ThreatDetector:
         X = frame[self.feature_columns].fillna(0.0).astype(float)
         y = frame['label'].astype(int)
 
+        self._set_model_info(frame)
         if RandomForestClassifier is not None:
             self.backend = 'sklearn'
             self.model = RandomForestClassifier(
@@ -133,6 +135,26 @@ class ThreatDetector:
             len(frame),
         )
         return True
+
+    def _set_model_info(self, frame: pd.DataFrame):
+        """Version = hash of the exact training data + feature list, so a model is traceable."""
+        import hashlib
+        import sklearn
+        digest = hashlib.sha256()
+        digest.update(','.join(self.feature_columns).encode())
+        digest.update(pd.util.hash_pandas_object(frame[self.feature_columns + ['label']], index=False).values.tobytes())
+        self.version = f'rf-{digest.hexdigest()[:10]}'
+        self.model_info = {
+            'version': self.version,
+            'algorithm': 'RandomForestClassifier(n_estimators=64, max_depth=8, class_weight=balanced_subsample, random_state=42)',
+            'features': list(self.feature_columns),
+            'training_rows': int(len(frame)),
+            'class_counts': {THREAT_LABELS[int(k)]: int(v) for k, v in frame['label'].value_counts().sort_index().items()},
+            'dataset': 'CICIDS2017 subset (backend/data/cicids_subset.csv)',
+            'sklearn_version': sklearn.__version__,
+            'trained_at': datetime.utcnow().isoformat(),
+            'evaluation': 'backend/scripts/evaluate_threat_detector.py (see docs/ML_EVIDENCE.md)',
+        }
 
     def _train_if_possible(self):
         frame = self._training_frame()
@@ -204,6 +226,7 @@ class ThreatDetector:
             'threat_type': threat_type,
             'confidence': round(float(confidence), 4),
             'source': self.backend,
+            'model_version': self.version,
             'detected_at': datetime.utcnow().isoformat(),
             'prediction': threat_type,
             'signals': {

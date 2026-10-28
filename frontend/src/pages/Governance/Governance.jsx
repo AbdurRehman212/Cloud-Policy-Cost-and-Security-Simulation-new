@@ -31,6 +31,9 @@ const Governance = () => {
   });
   const [complianceResults, setComplianceResults] = useState(null);
   const [learningActionKey, setLearningActionKey] = useState(null);
+  const [score, setScore] = useState(null);
+  const [violations, setViolations] = useState([]);
+  const [editingId, setEditingId] = useState(null);
 
   const orgId = currentOrganization?.id;
 
@@ -39,6 +42,8 @@ const Governance = () => {
       setPolicies([]);
       setAuditLogs([]);
       setRecentChecks([]);
+      setScore(null);
+      setViolations([]);
       setComplianceResults(null);
       setLoading(false);
       return;
@@ -46,7 +51,7 @@ const Governance = () => {
 
     setLoading(true);
     try {
-      const [policiesResponse, auditResponse, checksResponse] = await Promise.all([
+      const [policiesResponse, auditResponse, checksResponse, scoreResponse, violationsResponse] = await Promise.all([
         apiClient.get("/governance/policies", {
           params: { organization_id: orgId },
         }),
@@ -56,11 +61,19 @@ const Governance = () => {
         apiClient.get("/governance/compliance/checks", {
           params: { organization_id: orgId, limit: 20 },
         }),
+        apiClient.get("/governance/score", {
+          params: { organization_id: orgId },
+        }),
+        apiClient.get("/governance/violations", {
+          params: { organization_id: orgId },
+        }),
       ]);
 
       setPolicies(policiesResponse?.data?.data?.policies || []);
       setAuditLogs(auditResponse?.data?.data?.logs || []);
       setRecentChecks(checksResponse?.data?.data?.checks || []);
+      setScore(scoreResponse?.data?.data || null);
+      setViolations(violationsResponse?.data?.data?.violations || []);
     } catch (error) {
       toast.error(
         error?.response?.data?.error?.message || "Failed to load governance data",
@@ -68,6 +81,8 @@ const Governance = () => {
       setPolicies([]);
       setAuditLogs([]);
       setRecentChecks([]);
+      setScore(null);
+      setViolations([]);
     } finally {
       setLoading(false);
     }
@@ -88,9 +103,63 @@ const Governance = () => {
     };
   }, [complianceResults]);
 
+  const closePolicyModal = () => {
+    setShowCreateModal(false);
+    setEditingId(null);
+    setNewPolicy({ name: "", description: "", policy_rule: "", auto_remediate: false });
+  };
+
+  const openEditPolicy = (policy) => {
+    setEditingId(policy.id);
+    setNewPolicy({
+      name: policy.name,
+      description: policy.description || "",
+      policy_rule: policy.policy_rule || "",
+      auto_remediate: Boolean(policy.auto_remediate),
+    });
+    setShowCreateModal(true);
+  };
+
+  const togglePolicyStatus = async (policy) => {
+    const next = policy.status === "active" ? "disabled" : "active";
+    try {
+      await apiClient.put(`/governance/policies/${policy.id}`, {
+        organization_id: orgId,
+        status: next,
+      });
+      toast.success(`Policy ${next === "active" ? "enabled" : "disabled"}`);
+      await loadGovernanceData();
+    } catch (error) {
+      toast.error(error?.response?.data?.error?.message || "Failed to change policy status");
+    }
+  };
+
+  const deletePolicy = async (policy) => {
+    if (!window.confirm(`Delete policy "${policy.name}" and its check history?`)) return;
+    try {
+      await apiClient.delete(`/governance/policies/${policy.id}`, {
+        params: { organization_id: orgId },
+      });
+      toast.success("Policy deleted");
+      await loadGovernanceData();
+    } catch (error) {
+      toast.error(error?.response?.data?.error?.message || "Failed to delete policy");
+    }
+  };
+
   const handleCreatePolicy = async (event) => {
     event.preventDefault();
     try {
+      if (editingId) {
+        await apiClient.put(`/governance/policies/${editingId}`, {
+          ...newPolicy,
+          organization_id: orgId,
+        });
+        toast.success("Policy updated");
+        closePolicyModal();
+        await loadGovernanceData();
+        return;
+      }
       await apiClient.post("/governance/policies", {
         ...newPolicy,
         organization_id: orgId,
@@ -105,17 +174,12 @@ const Governance = () => {
       }
 
       toast.success("Policy created successfully");
-      setShowCreateModal(false);
-      setNewPolicy({
-        name: "",
-        description: "",
-        policy_rule: "",
-        auto_remediate: false,
-      });
+      closePolicyModal();
       await loadGovernanceData();
     } catch (error) {
       toast.error(
-        error?.response?.data?.error?.message || "Failed to create policy",
+        error?.response?.data?.error?.message ||
+          (editingId ? "Failed to update policy" : "Failed to create policy"),
       );
     }
   };
@@ -162,13 +226,15 @@ const Governance = () => {
             Governance & Compliance
           </h1>
           <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
-            Backend-owned policy compilation, org-scoped compliance evaluation, and persisted audit history.
+            Write rules in plain text, check your resources against them, and review the history of every check.
           </p>
         </div>
         <div className="flex flex-wrap gap-3">
           <button
             onClick={runComplianceCheck}
-            disabled={!orgId || runningCheck}
+            data-tour="run-compliance"
+            disabled={!orgId || runningCheck || currentOrganization?.my_role === "viewer"}
+            title={currentOrganization?.my_role === "viewer" ? "Viewers cannot run compliance checks" : undefined}
             className="btn-secondary flex items-center space-x-2 disabled:opacity-50"
           >
             <ShieldCheckIcon className="w-5 h-5" />
@@ -178,6 +244,7 @@ const Governance = () => {
             <button
               onClick={() => setShowCreateModal(true)}
               className="btn-primary flex items-center space-x-2"
+              data-tour="create-policy"
             >
               <PlusIcon className="w-5 h-5" />
               <span>Create Policy</span>
@@ -310,6 +377,19 @@ const Governance = () => {
                         {policy.status}
                       </span>
                     </div>
+                    {canManagePolicies && (
+                      <div className="mt-4 flex gap-3 border-t border-gray-100 pt-3 text-sm dark:border-gray-700">
+                        <button onClick={() => openEditPolicy(policy)} className="text-primary-600 hover:underline dark:text-primary-400">
+                          Edit
+                        </button>
+                        <button onClick={() => togglePolicyStatus(policy)} className="text-gray-600 hover:underline dark:text-gray-300">
+                          {policy.status === "active" ? "Disable" : "Enable"}
+                        </button>
+                        <button onClick={() => deletePolicy(policy)} className="text-red-600 hover:underline dark:text-red-400">
+                          Delete
+                        </button>
+                      </div>
+                    )}
                   </div>
                 ))}
               </div>
@@ -336,6 +416,55 @@ const Governance = () => {
             </div>
 
             <div className="space-y-6">
+              <div className="card" data-tour="governance-score">
+                <h3 className="text-lg font-semibold text-gray-900 dark:text-white">
+                  Governance Score
+                </h3>
+                {score?.evaluated ? (
+                  <>
+                    <p className="mt-2 text-3xl font-bold text-gray-900 dark:text-white">
+                      {Number(score.score).toFixed(1)}
+                      <span className="text-base font-normal text-gray-500"> / 100</span>
+                    </p>
+                    <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                      Last run {new Date(score.last_checked_at).toLocaleString()}. {score.formula}
+                    </p>
+                    <ul className="mt-3 space-y-1 text-sm text-gray-700 dark:text-gray-300">
+                      {(score.breakdown || []).map((item) => (
+                        <li key={item.policy_id} className="flex justify-between gap-2">
+                          <span>{item.policy_name} (weight {item.weight})</span>
+                          <span>{item.violations} violation(s), -{item.penalty_points} pts</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </>
+                ) : (
+                  <p className="mt-2 text-sm text-gray-500 dark:text-gray-400">
+                    No score yet. Run a compliance check to evaluate active policies.
+                  </p>
+                )}
+              </div>
+              <div className="card">
+                <h3 className="text-lg font-semibold text-gray-900 dark:text-white">
+                  Open Violations ({violations.length})
+                </h3>
+                <div className="mt-3 space-y-2">
+                  {violations.length > 0 ? (
+                    violations.slice(0, 10).map((v, index) => (
+                      <div key={`${v.policy_id}-${v.resource_id}-${index}`} className="rounded-lg bg-red-50 p-3 text-sm dark:bg-red-900/10">
+                        <p className="font-medium text-gray-900 dark:text-white">
+                          {v.policy_name} <span className="text-xs capitalize text-red-700 dark:text-red-300">({v.severity})</span>
+                        </p>
+                        <p className="text-gray-600 dark:text-gray-400">{v.resource_type} {v.resource_id}: {v.violations.join(", ")}</p>
+                      </div>
+                    ))
+                  ) : (
+                    <p className="text-sm text-gray-500 dark:text-gray-400">
+                      No open violations from the latest compliance run.
+                    </p>
+                  )}
+                </div>
+              </div>
               <div className="card">
                 <h3 className="text-lg font-semibold text-gray-900 dark:text-white">
                   Recent Compliance Checks
@@ -435,14 +564,14 @@ const Governance = () => {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
           <div className="mx-4 max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-xl bg-white p-6 dark:bg-gray-800">
             <h2 className="mb-4 text-xl font-bold text-gray-900 dark:text-white">
-              Create Governance Policy
+              {editingId ? "Edit Governance Policy" : "Create Governance Policy"}
             </h2>
             <form onSubmit={handleCreatePolicy} className="space-y-4">
               <div>
-                <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">
+                <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300" htmlFor="governance-f1">
                   Policy Name
                 </label>
-                <input
+                <input id="governance-f1"
                   type="text"
                   required
                   className="input-field"
@@ -454,10 +583,10 @@ const Governance = () => {
                 />
               </div>
               <div>
-                <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">
+                <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300" htmlFor="governance-f2">
                   Description
                 </label>
-                <textarea
+                <textarea id="governance-f2"
                   className="input-field"
                   rows="2"
                   value={newPolicy.description}
@@ -468,10 +597,10 @@ const Governance = () => {
                 />
               </div>
               <div>
-                <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">
+                <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300" htmlFor="governance-f3">
                   Policy Rule
                 </label>
-                <textarea
+                <textarea id="governance-f3"
                   required
                   className="input-field"
                   rows="4"
@@ -508,13 +637,13 @@ const Governance = () => {
               <div className="flex justify-end space-x-3 pt-4">
                 <button
                   type="button"
-                  onClick={() => setShowCreateModal(false)}
+                  onClick={closePolicyModal}
                   className="btn-secondary"
                 >
                   Cancel
                 </button>
                 <button type="submit" className="btn-primary">
-                  Create Policy
+                  {editingId ? "Save Changes" : "Create Policy"}
                 </button>
               </div>
             </form>

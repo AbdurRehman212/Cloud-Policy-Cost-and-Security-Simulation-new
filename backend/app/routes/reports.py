@@ -2,6 +2,7 @@ import csv
 from collections import defaultdict
 from datetime import date, datetime, timedelta
 from io import BytesIO, StringIO
+from xml.sax.saxutils import escape
 
 from flask import Blueprint, jsonify, request, send_file
 from flask_jwt_extended import get_jwt_identity, jwt_required
@@ -10,9 +11,12 @@ from reportlab.lib.pagesizes import letter
 from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 from reportlab.lib.styles import getSampleStyleSheet
 
+from app.utils.rbac import active_membership
 from app.models.cost import CostRecord
+from app.models.governance import Policy
 from app.models.organization import Organization, OrganizationMember
 from app.models.security import SecurityLog, ThreatDetection
+from app.services.governance_engine import governance_engine
 
 reports_bp = Blueprint('reports', __name__)
 
@@ -26,7 +30,7 @@ def _resolve_org_id_from_request(payload=None):
 def _require_org_membership(user_id, org_id):
     if org_id is None:
         return None
-    return OrganizationMember.query.filter_by(organization_id=org_id, user_id=user_id).first()
+    return active_membership(user_id, org_id)
 
 
 def _infer_plan(max_resources):
@@ -39,31 +43,90 @@ def _infer_plan(max_resources):
     return 'starter'
 
 
-def _cost_records_for_org(org_id):
-    return (
-        CostRecord.query
-        .filter_by(organization_id=org_id)
-        .order_by(CostRecord.date.asc(), CostRecord.hour.asc(), CostRecord.id.asc())
-        .all()
-    )
+def _parse_range(source):
+    """Read optional start_date/end_date (YYYY-MM-DD). Returns ((start, end), error)."""
+    parsed = []
+    for key in ('start_date', 'end_date'):
+        raw = source.get(key)
+        if not raw:
+            parsed.append(None)
+            continue
+        try:
+            parsed.append(datetime.strptime(str(raw), '%Y-%m-%d').date())
+        except ValueError:
+            return (None, None), f'{key} must be YYYY-MM-DD'
+    if parsed[0] and parsed[1] and parsed[0] > parsed[1]:
+        return (None, None), 'start_date must not be after end_date'
+    return tuple(parsed), None
 
 
-def _threats_for_org(org_id):
-    return (
-        ThreatDetection.query
-        .filter_by(organization_id=org_id)
-        .order_by(ThreatDetection.detected_at.desc(), ThreatDetection.id.desc())
-        .all()
-    )
+def _range_label(date_range):
+    start, end = date_range or (None, None)
+    if not start and not end:
+        return 'All available data'
+    return f'{start.isoformat() if start else "beginning"} to {end.isoformat() if end else "today"}'
 
 
-def _security_logs_for_org(org_id):
-    return (
-        SecurityLog.query
-        .filter_by(organization_id=org_id)
-        .order_by(SecurityLog.timestamp.desc(), SecurityLog.id.desc())
-        .all()
-    )
+def _day_bounds(date_range):
+    start, end = date_range or (None, None)
+    lo = datetime.combine(start, datetime.min.time()) if start else None
+    hi = datetime.combine(end + timedelta(days=1), datetime.min.time()) if end else None
+    return lo, hi
+
+
+def _cost_records_for_org(org_id, date_range=None):
+    query = CostRecord.query.filter_by(organization_id=org_id)
+    start, end = date_range or (None, None)
+    if start:
+        query = query.filter(CostRecord.date >= start)
+    if end:
+        query = query.filter(CostRecord.date <= end)
+    return query.order_by(CostRecord.date.asc(), CostRecord.hour.asc(), CostRecord.id.asc()).all()
+
+
+def _threats_for_org(org_id, date_range=None):
+    query = ThreatDetection.query.filter_by(organization_id=org_id)
+    lo, hi = _day_bounds(date_range)
+    if lo:
+        query = query.filter(ThreatDetection.detected_at >= lo)
+    if hi:
+        query = query.filter(ThreatDetection.detected_at < hi)
+    return query.order_by(ThreatDetection.detected_at.desc(), ThreatDetection.id.desc()).all()
+
+
+def _security_logs_for_org(org_id, date_range=None):
+    query = SecurityLog.query.filter_by(organization_id=org_id)
+    lo, hi = _day_bounds(date_range)
+    if lo:
+        query = query.filter(SecurityLog.timestamp >= lo)
+    if hi:
+        query = query.filter(SecurityLog.timestamp < hi)
+    return query.order_by(SecurityLog.timestamp.desc(), SecurityLog.id.desc()).all()
+
+
+def _governance_pdf_sections(org_id):
+    state = governance_engine.get_latest_state(org_id)
+    score = state['governance_score']
+    policies = Policy.query.filter_by(organization_id=org_id).order_by(Policy.id.asc()).all()
+    summary_rows = [
+        ['Policies (total / active)', f'{len(policies)} / {sum(1 for p in policies if p.status and p.status.value == "active")}'],
+        ['Last compliance run', state['last_checked_at'] or 'No compliance check has been run'],
+        ['Governance score', f'{score["score"]:.1f} / 100' if state['evaluated'] else 'Not evaluated'],
+        ['Open violations', str(len(state['violations']))],
+        ['Score formula', score['formula']],
+    ]
+    breakdown_rows = [[
+        item['policy_name'], str(item['severity']), str(item['weight']),
+        str(item['resources_evaluated']), str(item['violations']), str(item['penalty_points']),
+    ] for item in score['breakdown']] or [['No active policies', '', '', '', '', '']]
+    violation_rows = [[
+        v['policy_name'], str(v['severity']), f'{v["resource_type"]} {v["resource_id"]}', '; '.join(v['violations']),
+    ] for v in state['violations'][:40]] or [['No open violations', '', '', '']]
+    return [
+        ('Governance Summary', ['Metric', 'Value'], summary_rows, colors.darkgreen),
+        ('Score Breakdown', ['Policy', 'Severity', 'Weight', 'Checks', 'Violations', 'Penalty'], breakdown_rows, colors.grey),
+        ('Open Violations', ['Policy', 'Severity', 'Resource', 'Details'], violation_rows, colors.salmon),
+    ]
 
 
 def _cost_trend_summary(cost_records):
@@ -103,11 +166,12 @@ def _security_trend_summary(threats):
     }
 
 
-def _build_summary_pdf(org_id):
+def _build_summary_pdf(org_id, date_range=None):
     org = Organization.query.get(org_id)
-    cost_records = _cost_records_for_org(org_id)
-    threats = _threats_for_org(org_id)
-    logs = _security_logs_for_org(org_id)
+    cost_records = _cost_records_for_org(org_id, date_range)
+    threats = _threats_for_org(org_id, date_range)
+    logs = _security_logs_for_org(org_id, date_range)
+    governance = governance_engine.get_latest_state(org_id)
 
     total_spend = round(sum(record.total_cost for record in cost_records), 2)
     active_threats = sum(1 for threat in threats if threat.status == 'active')
@@ -126,17 +190,20 @@ def _build_summary_pdf(org_id):
         ['Security Logs', str(len(logs))],
         ['Cost Trend (7d)', f'${cost_trend["current_total"]:.2f} vs ${cost_trend["previous_total"]:.2f}'],
         ['Threat Trend (7d)', f'{security_trend["current_total"]} vs {security_trend["previous_total"]}'],
+        ['Governance Score', f'{governance["governance_score"]["score"]:.1f} / 100' if governance['evaluated'] else 'Not evaluated'],
+        ['Open Policy Violations', str(len(governance['violations']))],
     ]
     return _build_pdf_document(
         f'Organization Summary Report - {org.name if org else f"Org {org_id}"}',
-        [
+        subtitle=date_range,
+        sections=[
             ('Summary', ['Metric', 'Value'], rows, colors.grey),
             (
                 'Notes',
                 ['Topic', 'Details'],
                 [[
                     'Report scope',
-                    'This PDF uses persisted organization, cost, threat, and security log data only.',
+                    'This PDF uses persisted organization, cost, threat, security log and governance data only.',
                 ]],
                 colors.lightgrey,
             ),
@@ -144,9 +211,9 @@ def _build_summary_pdf(org_id):
     )
 
 
-def _build_cost_pdf(org_id):
+def _build_cost_pdf(org_id, date_range=None):
     org = Organization.query.get(org_id)
-    cost_records = _cost_records_for_org(org_id)
+    cost_records = _cost_records_for_org(org_id, date_range)
     total_spend = round(sum(record.total_cost for record in cost_records), 2)
     by_service = defaultdict(float)
     for record in cost_records:
@@ -177,7 +244,8 @@ def _build_cost_pdf(org_id):
 
     return _build_pdf_document(
         f'Cost Summary Report - {org.name if org else f"Org {org_id}"}',
-        [
+        subtitle=date_range,
+        sections=[
             ('Summary', ['Metric', 'Value'], summary_rows, colors.grey),
             ('By Service', ['Service', 'Spend'], service_rows, colors.lightblue),
             ('Recent Records', ['Date', 'Hour', 'Resource ID', 'Type', 'Total Cost'], record_rows, colors.lightgrey),
@@ -185,10 +253,10 @@ def _build_cost_pdf(org_id):
     )
 
 
-def _build_security_pdf(org_id):
+def _build_security_pdf(org_id, date_range=None):
     org = Organization.query.get(org_id)
-    threats = _threats_for_org(org_id)
-    logs = _security_logs_for_org(org_id)
+    threats = _threats_for_org(org_id, date_range)
+    logs = _security_logs_for_org(org_id, date_range)
     trend = _security_trend_summary(threats)
     active_threats = sum(1 for threat in threats if threat.status == 'active')
 
@@ -223,7 +291,8 @@ def _build_security_pdf(org_id):
 
     return _build_pdf_document(
         f'Security Summary Report - {org.name if org else f"Org {org_id}"}',
-        [
+        subtitle=date_range,
+        sections=[
             ('Summary', ['Metric', 'Value'], summary_rows, colors.red),
             ('Recent Threats', ['Detected At', 'Type', 'Severity', 'Status', 'Confidence'], threat_rows, colors.salmon),
             ('Recent Security Logs', ['Timestamp', 'Event', 'Severity', 'Description'], log_rows, colors.lightgrey),
@@ -231,21 +300,37 @@ def _build_security_pdf(org_id):
     )
 
 
-def _build_pdf_document(title_text, sections):
+def _build_governance_pdf(org_id):
+    org = Organization.query.get(org_id)
+    return _build_pdf_document(
+        f'Governance Report - {org.name if org else f"Org {org_id}"}',
+        subtitle=None,
+        sections=_governance_pdf_sections(org_id),
+    )
+
+
+def _build_pdf_document(title_text, sections, subtitle=None):
     buffer = BytesIO()
     doc = SimpleDocTemplate(buffer, pagesize=letter)
     styles = getSampleStyleSheet()
     story = [
-        Paragraph(title_text, styles['Heading1']),
+        Paragraph(escape(title_text), styles['Heading1']),
         Spacer(1, 12),
         Paragraph(f'Generated: {datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")}', styles['Normal']),
+        Paragraph(f'Period: {_range_label(subtitle)}', styles['Normal']),
+        Paragraph('All figures come from simulated cloud resources and are not real cloud billing.', styles['Italic']),
         Spacer(1, 12),
     ]
 
     for section_title, headers, rows, header_color in sections:
         story.append(Paragraph(section_title, styles['Heading2']))
         story.append(Spacer(1, 6))
-        table = Table([headers] + rows)
+        header_cells = [
+            Paragraph(f'<font color="white"><b>{escape(str(c))}</b></font>', styles['BodyText'])
+            for c in headers
+        ]
+        body_rows = [[Paragraph(escape(str(c)), styles['BodyText']) for c in row] for row in rows]
+        table = Table([header_cells] + body_rows, repeatRows=1)
         table.setStyle(TableStyle([
             ('BACKGROUND', (0, 0), (-1, 0), header_color),
             ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
@@ -262,12 +347,19 @@ def _build_pdf_document(title_text, sections):
     return buffer
 
 
+def _csv_safe(cell):
+    """Prefix text that a spreadsheet would execute as a formula."""
+    if isinstance(cell, str) and cell[:1] in ('=', '+', '-', '@'):
+        return "'" + cell
+    return cell
+
+
 def _csv_response(filename, headers, rows):
     csv_buffer = StringIO()
     writer = csv.writer(csv_buffer)
     writer.writerow(headers)
     for row in rows:
-        writer.writerow(row)
+        writer.writerow([_csv_safe(cell) for cell in row])
 
     payload = BytesIO(csv_buffer.getvalue().encode('utf-8'))
     payload.seek(0)
@@ -279,67 +371,70 @@ def _csv_response(filename, headers, rows):
     )
 
 
+def _authorize():
+    """Return (org_id, date_range, error_response)."""
+    org_id = _resolve_org_id_from_request()
+    if not _require_org_membership(get_jwt_identity(), org_id):
+        return None, None, (jsonify({'error': 'Access denied'}), 403)
+    date_range, error = _parse_range(request.args)
+    if error:
+        return None, None, (jsonify({'error': error}), 400)
+    return org_id, date_range, None
+
+
+def _pdf_response(buffer, name):
+    return send_file(
+        buffer,
+        mimetype='application/pdf',
+        as_attachment=True,
+        download_name=f'{name}_report_{datetime.utcnow().strftime("%Y%m%d")}.pdf',
+    )
+
+
 @reports_bp.route('/summary.pdf', methods=['GET'])
 @jwt_required()
 def summary_pdf():
-    user_id = get_jwt_identity()
-    org_id = _resolve_org_id_from_request()
-    member = _require_org_membership(user_id, org_id)
-    if not member:
-        return jsonify({'error': 'Access denied'}), 403
-
-    return send_file(
-        _build_summary_pdf(org_id),
-        mimetype='application/pdf',
-        as_attachment=True,
-        download_name=f'summary_report_{datetime.utcnow().strftime("%Y%m%d")}.pdf',
-    )
+    org_id, date_range, error = _authorize()
+    if error:
+        return error
+    return _pdf_response(_build_summary_pdf(org_id, date_range), 'summary')
 
 
 @reports_bp.route('/cost.pdf', methods=['GET'])
 @jwt_required()
 def cost_pdf():
-    user_id = get_jwt_identity()
-    org_id = _resolve_org_id_from_request()
-    member = _require_org_membership(user_id, org_id)
-    if not member:
-        return jsonify({'error': 'Access denied'}), 403
-
-    return send_file(
-        _build_cost_pdf(org_id),
-        mimetype='application/pdf',
-        as_attachment=True,
-        download_name=f'cost_report_{datetime.utcnow().strftime("%Y%m%d")}.pdf',
-    )
+    org_id, date_range, error = _authorize()
+    if error:
+        return error
+    return _pdf_response(_build_cost_pdf(org_id, date_range), 'cost')
 
 
 @reports_bp.route('/security.pdf', methods=['GET'])
 @jwt_required()
 def security_pdf():
-    user_id = get_jwt_identity()
-    org_id = _resolve_org_id_from_request()
-    member = _require_org_membership(user_id, org_id)
-    if not member:
-        return jsonify({'error': 'Access denied'}), 403
+    org_id, date_range, error = _authorize()
+    if error:
+        return error
+    return _pdf_response(_build_security_pdf(org_id, date_range), 'security')
 
-    return send_file(
-        _build_security_pdf(org_id),
-        mimetype='application/pdf',
-        as_attachment=True,
-        download_name=f'security_report_{datetime.utcnow().strftime("%Y%m%d")}.pdf',
-    )
+
+@reports_bp.route('/governance.pdf', methods=['GET'])
+@jwt_required()
+def governance_pdf():
+    org_id, _, error = _authorize()
+    if error:
+        return error
+    return _pdf_response(_build_governance_pdf(org_id), 'governance')
 
 
 @reports_bp.route('/cost.csv', methods=['GET'])
 @jwt_required()
 def cost_csv():
-    user_id = get_jwt_identity()
-    org_id = _resolve_org_id_from_request()
-    member = _require_org_membership(user_id, org_id)
-    if not member:
-        return jsonify({'error': 'Access denied'}), 403
+    org_id, date_range, error = _authorize()
+    if error:
+        return error
 
-    cost_records = _cost_records_for_org(org_id)
+    cost_records = _cost_records_for_org(org_id, date_range)
     rows = [[
         record.date.isoformat() if record.date else '',
         record.hour if record.hour is not None else '',
@@ -356,16 +451,8 @@ def cost_csv():
     return _csv_response(
         f'cost_export_{datetime.utcnow().strftime("%Y%m%d")}.csv',
         [
-            'date',
-            'hour',
-            'resource_id',
-            'resource_type',
-            'compute_cost',
-            'storage_cost',
-            'network_cost',
-            'total_cost',
-            'cpu_avg',
-            'memory_avg',
+            'date', 'hour', 'resource_id', 'resource_type', 'compute_cost',
+            'storage_cost', 'network_cost', 'total_cost', 'cpu_avg', 'memory_avg',
         ],
         rows,
     )
@@ -374,13 +461,11 @@ def cost_csv():
 @reports_bp.route('/security.csv', methods=['GET'])
 @jwt_required()
 def security_csv():
-    user_id = get_jwt_identity()
-    org_id = _resolve_org_id_from_request()
-    member = _require_org_membership(user_id, org_id)
-    if not member:
-        return jsonify({'error': 'Access denied'}), 403
+    org_id, date_range, error = _authorize()
+    if error:
+        return error
 
-    threats = _threats_for_org(org_id)
+    threats = _threats_for_org(org_id, date_range)
     rows = [[
         threat.detected_at.isoformat() if threat.detected_at else '',
         threat.threat_type.value if threat.threat_type else '',
@@ -394,14 +479,28 @@ def security_csv():
     return _csv_response(
         f'security_export_{datetime.utcnow().strftime("%Y%m%d")}.csv',
         [
-            'detected_at',
-            'threat_type',
-            'severity',
-            'confidence_score',
-            'status',
-            'affected_resources',
-            'detection_pattern',
+            'detected_at', 'threat_type', 'severity', 'confidence_score',
+            'status', 'affected_resources', 'detection_pattern',
         ],
+        rows,
+    )
+
+
+@reports_bp.route('/governance.csv', methods=['GET'])
+@jwt_required()
+def governance_csv():
+    org_id, _, error = _authorize()
+    if error:
+        return error
+
+    state = governance_engine.get_latest_state(org_id)
+    rows = [[
+        v['checked_at'], v['policy_name'], v['severity'], v['resource_type'],
+        v['resource_id'], '; '.join(v['violations']),
+    ] for v in state['violations']]
+    return _csv_response(
+        f'governance_export_{datetime.utcnow().strftime("%Y%m%d")}.csv',
+        ['checked_at', 'policy', 'severity', 'resource_type', 'resource_id', 'violations'],
         rows,
     )
 
@@ -410,28 +509,27 @@ def security_csv():
 @jwt_required()
 def generate_report():
     """Legacy PDF generation endpoint kept for existing frontend wiring."""
-    payload = request.get_json() or {}
+    payload = request.get_json(silent=True) or {}
     report_type = (payload.get('report_type') or 'summary').strip().lower()
     org_id = _resolve_org_id_from_request(payload)
-    user_id = get_jwt_identity()
 
-    member = _require_org_membership(user_id, org_id)
-    if not member:
+    if not _require_org_membership(get_jwt_identity(), org_id):
         return jsonify({'error': 'Access denied'}), 403
+    date_range, error = _parse_range(payload)
+    if error:
+        return jsonify({'error': error}), 400
 
     if report_type == 'cost':
-        buffer = _build_cost_pdf(org_id)
+        buffer = _build_cost_pdf(org_id, date_range)
     elif report_type == 'security':
-        buffer = _build_security_pdf(org_id)
+        buffer = _build_security_pdf(org_id, date_range)
+    elif report_type == 'governance':
+        buffer = _build_governance_pdf(org_id)
+    elif report_type == 'summary':
+        buffer = _build_summary_pdf(org_id, date_range)
     else:
-        buffer = _build_summary_pdf(org_id)
-
-    return send_file(
-        buffer,
-        mimetype='application/pdf',
-        as_attachment=True,
-        download_name=f'{report_type}_report_{datetime.utcnow().strftime("%Y%m%d")}.pdf',
-    )
+        return jsonify({'error': 'Invalid report type'}), 400
+    return _pdf_response(buffer, report_type)
 
 
 @reports_bp.route('/export/csv', methods=['GET'])
@@ -441,6 +539,8 @@ def export_csv():
     export_type = (request.args.get('type') or 'costs').strip().lower()
     if export_type == 'security':
         return security_csv()
+    if export_type == 'governance':
+        return governance_csv()
     if export_type in {'cost', 'costs'}:
         return cost_csv()
     return jsonify({'error': 'Invalid export type'}), 400

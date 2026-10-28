@@ -296,26 +296,15 @@ def _derive_security_frame_from_cicids(raw: pd.DataFrame) -> pd.DataFrame:
 
     rpm = (flow_packets_s * 60).clip(0, 10_000)
     latency_ms = (flow_duration_us / 1_000).clip(1, 10_000)
-    error_rate = (
-        ((psh_flags + ack_flags) / (fwd_packets + 1)).clip(0, 1) * 0.05
-        + labels.map({0: 0.0, 1: 0.08, 2: 0.12, 3: 0.10})
-    ).clip(0, 0.35)
+    # Flow-derived only. (Earlier versions added a constant keyed on the class label here, which
+    # leaked the answer into the training features.)
+    error_rate = (((psh_flags + ack_flags) / (fwd_packets + 1)).clip(0, 1) * 0.05).clip(0, 0.35)
     bytes_in = (fwd_len_mean * fwd_packets + init_win_fwd * 0.1).clip(0, 5_000_000)
     total_bytes = (flow_bytes_s * duration_s).clip(0, 10_000_000)
     bytes_out = (total_bytes - bytes_in + init_win_bwd * 0.05).clip(0, 5_000_000)
     active_connections = (
         (fwd_packets + psh_flags + ack_flags) * 0.5 + (active_mean / 10_000)
     ).clip(1, 500)
-    cpu_util = (
-        (flow_packets_s / max(float(flow_packets_s.quantile(0.95) or 1.0), 1.0)) * 60
-        + (flow_bytes_s / max(float(flow_bytes_s.quantile(0.95) or 1.0), 1.0)) * 20
-        + labels.map({0: 5.0, 1: 18.0, 2: 12.0, 3: 10.0})
-    ).clip(0, 100)
-    memory_util = (
-        (avg_packet_size / max(float(avg_packet_size.quantile(0.95) or 1.0), 1.0)) * 45
-        + (idle_mean / max(float(idle_mean.quantile(0.95) or 1.0), 1.0)) * 10
-        + labels.map({0: 8.0, 1: 16.0, 2: 14.0, 3: 12.0})
-    ).clip(0, 100)
     disk_read = (fwd_header / max(float(fwd_header.max() or 1.0), 1.0) * 2500).clip(0, 5000)
     disk_write = (bwd_header / max(float(bwd_header.max() or 1.0), 1.0) * 1800).clip(0, 3000)
     network_in = (flow_bytes_s / max(float(flow_bytes_s.quantile(0.95) or 1.0), 1.0) * 320).clip(0, 500)
@@ -324,11 +313,6 @@ def _derive_security_frame_from_cicids(raw: pd.DataFrame) -> pd.DataFrame:
         / max(float((bwd_len_mean + init_win_bwd * 0.1).quantile(0.95) or 1.0), 1.0)
         * 300
     ).clip(0, 500)
-    auth_failures = (
-        labels.map({0: 0, 1: 0, 2: 12, 3: 24})
-        + (attack_type.str.contains('brute', na=False).astype(int) * 8)
-        + (attack_type.str.contains('port', na=False).astype(int) * 4)
-    ).astype(float).clip(0, 50)
 
     result = pd.DataFrame({
         'requests_per_minute': rpm.values,
@@ -337,13 +321,10 @@ def _derive_security_frame_from_cicids(raw: pd.DataFrame) -> pd.DataFrame:
         'bytes_in': bytes_in.values,
         'bytes_out': bytes_out.values,
         'active_connections': active_connections.values,
-        'cpu_utilization': cpu_util.values,
-        'memory_utilization': memory_util.values,
         'disk_read_iops': disk_read.values,
         'disk_write_iops': disk_write.values,
         'network_in_mbps': network_in.values,
         'network_out_mbps': network_out.values,
-        'auth_failures': auth_failures.values,
         'label': labels.values,
     })
 

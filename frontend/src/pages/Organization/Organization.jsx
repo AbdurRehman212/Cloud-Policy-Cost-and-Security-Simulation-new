@@ -191,7 +191,7 @@ export default function Organization() {
   const canManage = myRole === "owner" || myRole === "admin";
 
   return (
-    <div className="space-y-6 max-w-5xl mx-auto">
+    <div className="space-y-6 max-w-5xl mx-auto" data-tour="org-page">
       <div>
         <h1 className="text-2xl font-bold text-gray-900 dark:text-white">
           {orgDetail?.name}
@@ -201,7 +201,7 @@ export default function Organization() {
             {myRole}
           </span>
           {orgDetail?.created_at && (
-            <span className="text-xs text-gray-400 dark:text-gray-500">
+            <span className="text-xs text-gray-600 dark:text-gray-400">
               Created {new Date(orgDetail.created_at).toLocaleDateString()}
             </span>
           )}
@@ -267,6 +267,7 @@ export default function Organization() {
             <div className="flex justify-end">
               <button
                 type="button"
+                data-tour="invite-member"
                 onClick={() => setInviteOpen(true)}
                 className="btn-primary"
               >
@@ -282,8 +283,8 @@ export default function Organization() {
               </h3>
               <form onSubmit={handleInvite} className="flex flex-wrap gap-3 items-end">
                 <div>
-                  <label className="block text-sm text-gray-600 dark:text-gray-400 mb-1">Email</label>
-                  <input
+                  <label className="block text-sm text-gray-600 dark:text-gray-400 mb-1" htmlFor="organization-f1">Email</label>
+                  <input id="organization-f1"
                     type="email"
                     required
                     value={inviteEmail}
@@ -293,8 +294,8 @@ export default function Organization() {
                   />
                 </div>
                 <div>
-                  <label className="block text-sm text-gray-600 dark:text-gray-400 mb-1">Role</label>
-                  <select
+                  <label className="block text-sm text-gray-600 dark:text-gray-400 mb-1" htmlFor="organization-f2">Role</label>
+                  <select id="organization-f2"
                     value={inviteRole}
                     onChange={(e) => setInviteRole(e.target.value)}
                     className="input-field"
@@ -395,10 +396,10 @@ export default function Organization() {
             </h2>
             <form onSubmit={handleSaveOrg} className="space-y-4 max-w-md">
               <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1" htmlFor="organization-f3">
                   Name
                 </label>
-                <input
+                <input id="organization-f3"
                   type="text"
                   value={editName}
                   onChange={(e) => setEditName(e.target.value)}
@@ -407,10 +408,10 @@ export default function Organization() {
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1" htmlFor="organization-f4">
                   Description
                 </label>
-                <textarea
+                <textarea id="organization-f4"
                   value={editDesc}
                   onChange={(e) => setEditDesc(e.target.value)}
                   className="input-field w-full min-h-[80px]"

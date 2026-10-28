@@ -285,16 +285,16 @@ const Dashboard = () => {
 
   const currentQueueMs = summary.workload?.queue_total_ms || 0;
   let systemStatus = "System Stable";
-  let statusColor = "bg-success-50 text-success-600 dark:bg-success-900/20 dark:text-success-400";
+  let statusColor = "bg-success-50 text-success-700 dark:bg-success-900/20 dark:text-success-400";
   if (currentQueueMs > 1800) {
     systemStatus = "Approaching Saturation";
-    statusColor = "bg-danger-50 text-danger-600 dark:bg-danger-900/20 dark:text-danger-400";
+    statusColor = "bg-danger-50 text-danger-700 dark:bg-danger-900/20 dark:text-danger-400";
   } else if ((summary.bpi || 0) > (summary.target_bpi || 0) && (summary.bpi || 0) > 0) {
     systemStatus = "Scaling Triggered";
-    statusColor = "bg-purple-50 text-purple-600 dark:bg-purple-900/20 dark:text-purple-400";
+    statusColor = "bg-purple-50 text-purple-700 dark:bg-purple-900/20 dark:text-purple-400";
   } else if (currentQueueMs > 50) {
     systemStatus = "System Under Load";
-    statusColor = "bg-warning-50 text-warning-600 dark:bg-warning-900/20 dark:text-warning-400";
+    statusColor = "bg-warning-50 text-warning-700 dark:bg-warning-900/20 dark:text-warning-400";
   }
   
   if (loading) {
@@ -322,13 +322,13 @@ const Dashboard = () => {
     <div className="space-y-5">
 
       {/* ── 1. Organization Workspace Banner ── */}
-      <div className="animate-fade-up flex flex-wrap items-center justify-between gap-3 rounded-xl bg-gradient-to-r from-blue-800 via-indigo-700 to-violet-700 px-5 py-4 shadow-lg">
+      <div className="animate-fade-up flex flex-wrap items-center justify-between gap-3 rounded-xl bg-primary-800 px-5 py-4">
         <div className="flex items-center gap-3">
           <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-white/15">
             <BuildingOfficeIcon className="h-5 w-5 text-white" />
           </div>
           <div>
-            <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-white/60">Organization Workspace</p>
+            <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-white/80">Organization Workspace</p>
             <p className="text-sm font-bold text-white leading-tight mt-0.5">
               {activeOrgName || "Select an organization"}
             </p>
@@ -356,13 +356,13 @@ const Dashboard = () => {
       </div>
 
       {/* ── Dashboard header ── */}
-      <div className="animate-fade-up-1 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+      <div data-tour="dashboard-header" className="animate-fade-up-1 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="text-xl font-bold text-gray-900 dark:text-white tracking-tight">
             Resource Operations Dashboard
           </h1>
           <div className="mt-1.5 flex flex-wrap items-center gap-2">
-            <span className="text-xs text-gray-400 dark:text-gray-500">
+            <span className="text-xs text-gray-600 dark:text-gray-400">
               {snapshotUpdatedAt
                 ? `Updated ${snapshotUpdatedAt.toLocaleTimeString()}`
                 : "Awaiting metrics"}
@@ -459,10 +459,10 @@ const Dashboard = () => {
                 <div className="min-w-0 flex-1">
                   <p className="section-label">Security Status</p>
                   <p className={`mt-2 text-3xl font-bold tabular-nums tracking-tight ${good ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400"}`}>
-                    {score}<span className="text-base font-medium text-gray-400">/100</span>
+                    {score}<span className="text-base font-medium text-gray-600 dark:text-gray-400">/100</span>
                   </p>
                   <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-gray-100 dark:bg-gray-700">
-                    <div className={`h-1.5 rounded-full transition-all duration-500 ${good ? "bg-emerald-500" : "bg-red-500"}`} style={{ width: `${score}%` }} />
+                    <div className={`h-1.5 rounded-full transition duration-500 ${good ? "bg-emerald-500" : "bg-red-500"}`} style={{ width: `${score}%` }} />
                   </div>
                 </div>
                 <div className={`shrink-0 rounded-xl p-3 shadow-sm transition-transform duration-200 group-hover:scale-110 ${good ? "bg-emerald-500" : "bg-red-500"}`}>
@@ -493,7 +493,7 @@ const Dashboard = () => {
 
       {/* ── 3. DES Simulation Metrics ── */}
       <div className="animate-fade-up-2">
-        <p className="mb-2 text-xs font-semibold uppercase tracking-widest text-gray-400 dark:text-gray-500">
+        <p className="mb-2 text-xs font-semibold uppercase tracking-widest text-gray-600 dark:text-gray-400">
           DES Simulation Metrics
         </p>
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
@@ -644,7 +644,7 @@ const Dashboard = () => {
       )}
 
       {/* ── 5. Resource Inventory Table ── */}
-      <div className="card">
+      <div className="card" data-tour="dashboard-inventory">
         <div className="mb-4 flex items-center justify-between gap-3">
           <h2 className="text-lg font-semibold text-gray-900 dark:text-white">
             Resource Inventory
@@ -716,7 +716,7 @@ const Dashboard = () => {
             </table>
           </div>
         ) : (
-          <p className="text-sm text-gray-400 dark:text-gray-500">
+          <p className="text-sm text-gray-600 dark:text-gray-400">
             No resources found — provision a VM or database to see it here.
           </p>
         )}
@@ -762,7 +762,7 @@ const Dashboard = () => {
             ))}
           </div>
         ) : (
-          <p className="text-sm text-gray-400 dark:text-gray-500">No recent threats detected.</p>
+          <p className="text-sm text-gray-600 dark:text-gray-400">No recent threats detected.</p>
         )}
       </div>
 
@@ -845,7 +845,7 @@ const Dashboard = () => {
               </div>
             ))
           ) : (
-            <p className="text-sm text-gray-400 dark:text-gray-500">No optimisation recommendations at this time.</p>
+            <p className="text-sm text-gray-600 dark:text-gray-400">No optimisation recommendations at this time.</p>
           )}
         </div>
       </div>
@@ -877,7 +877,7 @@ const Dashboard = () => {
                       </p>
                     )}
                     {event.timestamp && (
-                      <p className="mt-0.5 text-[10px] uppercase tracking-wide text-gray-400 dark:text-gray-500">
+                      <p className="mt-0.5 text-[10px] uppercase tracking-wide text-gray-600 dark:text-gray-400">
                         {new Date(event.timestamp).toLocaleTimeString()}
                       </p>
                     )}
@@ -887,7 +887,7 @@ const Dashboard = () => {
             })}
           </ul>
         ) : (
-          <p className="text-sm text-gray-400 dark:text-gray-500">No recent activity recorded yet.</p>
+          <p className="text-sm text-gray-600 dark:text-gray-400">No recent activity recorded yet.</p>
         )}
       </div>
 

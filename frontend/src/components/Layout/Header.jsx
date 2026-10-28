@@ -2,7 +2,8 @@ import React, { useEffect, useRef, useState } from 'react';
 import { useDispatch, useSelector, batch } from 'react-redux';
 import {
   ArrowRightOnRectangleIcon,
-  BellIcon,
+  Bars3Icon,
+  QuestionMarkCircleIcon,
   BuildingOfficeIcon,
   CheckIcon,
   ChevronDownIcon,
@@ -11,6 +12,7 @@ import {
 } from '@heroicons/react/24/outline';
 
 import apiClient from '../../services/api';
+import { useTour } from '../../tour/TourProvider';
 import { logoutUser } from '../../store/slices/authSlice';
 import { clearCostState } from '../../store/slices/costSlice';
 import { clearDashboard } from '../../store/slices/dashboardSlice';
@@ -45,8 +47,9 @@ const ROLE_LABELS = {
   viewer: 'Viewer',
 };
 
-const Header = () => {
+const Header = ({ onMenuClick = () => {} }) => {
   const dispatch = useDispatch();
+  const { startTour } = useTour();
   const { user } = useSelector((state) => state.auth);
   const { organizations, currentOrganization } = useSelector((state) => state.organization);
 
@@ -94,15 +97,25 @@ const Header = () => {
   };
 
   return (
-    <header className="bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 px-6 py-4">
-      <div className="flex items-center justify-between">
-        <div className="relative" ref={dropdownRef}>
+    <header className="bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 px-4 sm:px-6 py-3 sm:py-4">
+      <div className="flex items-center justify-between gap-2">
+        <button
+          type="button"
+          onClick={onMenuClick}
+          className="lg:hidden p-2 mr-1 rounded-lg text-gray-600 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-700"
+          aria-label="Open navigation menu"
+        >
+          <Bars3Icon className="w-6 h-6" />
+        </button>
+        <div className="relative min-w-0" ref={dropdownRef} data-tour="org-switcher">
           <button
             onClick={() => setDropdownOpen((open) => !open)}
-            className="flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+            aria-haspopup="listbox"
+            aria-expanded={dropdownOpen}
+            className="flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors max-w-full"
           >
             <BuildingOfficeIcon className="w-5 h-5 text-gray-500 dark:text-gray-400 shrink-0" />
-            <span className="font-semibold text-gray-900 dark:text-white text-sm">
+            <span className="font-semibold text-gray-900 dark:text-white text-sm truncate max-w-[9rem] sm:max-w-xs">
               {currentOrganization?.name || 'Select Organization'}
             </span>
             {currentRole && (
@@ -187,13 +200,19 @@ const Header = () => {
           )}
         </div>
 
-        <div className="flex items-center space-x-4">
-          <UserProgressBar />
-          <button className="relative p-2 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200">
-            <BellIcon className="w-6 h-6" />
-            <span className="absolute top-1 right-1 w-2 h-2 bg-danger-500 rounded-full"></span>
+        <div className="flex items-center gap-2 sm:gap-4 shrink-0">
+          <div className="hidden lg:block"><UserProgressBar /></div>
+          <button
+            type="button"
+            onClick={() => startTour(0)}
+            data-tour="help"
+            className="inline-flex items-center gap-1.5 rounded-lg border border-primary-200 px-2.5 py-1.5 text-sm font-medium text-primary-700 hover:bg-primary-50 dark:border-primary-800 dark:text-primary-300 dark:hover:bg-primary-900/20"
+            aria-label="Help: take a guided tour"
+          >
+            <QuestionMarkCircleIcon className="w-5 h-5" />
+            <span className="hidden sm:inline">Help / Take a Tour</span>
           </button>
-          <div className="flex items-center space-x-3 pl-4 border-l border-gray-200 dark:border-gray-700">
+          <div className="flex items-center space-x-3 pl-2 sm:pl-4 border-l border-gray-200 dark:border-gray-700">
             <UserCircleIcon className="w-8 h-8 text-gray-400" />
             <div className="hidden md:block">
               <div className="flex items-center gap-2">
@@ -222,6 +241,7 @@ const Header = () => {
               }}
               className="p-2 text-gray-500 hover:text-danger-600 dark:text-gray-400 dark:hover:text-danger-400"
               title="Logout"
+              aria-label="Log out"
             >
               <ArrowRightOnRectangleIcon className="w-5 h-5" />
             </button>

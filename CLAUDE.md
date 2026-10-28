@@ -30,7 +30,7 @@ Cloud simulator for learning cloud infrastructure management - provision VMs, co
 - **HTTP:** Axios
 
 ### Infrastructure
-- **Database:** PostgreSQL at `postgresql://abdur:admin123@localhost/cloud_simulator`
+- **Database:** PostgreSQL at `postgresql://<user>:<password>@localhost/cloud_simulator  (set via DATABASE_URL in backend/.env; never commit)`
 - **Cache:** Redis at `redis://localhost:6379/0`
 - **Runtime:** Python 3.x with eventlet for async I/O
 
@@ -98,12 +98,12 @@ User (account) → OrganizationMember (role-based) → Organization (tenant)
 - `POST /api/auth/refresh` - Token refresh
 
 ### Organization
-- `GET /api/organizations` - List user's organizations
-- `POST /api/organizations` - Create organization
-- `GET /api/organizations/<id>` - Get organization details
-- `PUT /api/organizations/<id>` - Update organization
-- `DELETE /api/organizations/<id>` - Delete organization
-- `POST /api/organizations/<id>/invite` - Invite members
+- `GET /api/org` - List user's organizations
+- `POST /api/org` - Create organization
+- `GET /api/org/<id>` - Get organization details
+- `PUT /api/org/<id>` - Update organization
+- `DELETE /api/org/<id>` - Delete organization
+- `POST /api/org/<id>/invite` - Invite members
 
 ### Resources (VM/Database)
 - `GET /api/resources` - List all resources for org
@@ -156,9 +156,9 @@ User (account) → OrganizationMember (role-based) → Organization (tenant)
 MAPE (Monitor-Analyze-Plan-Execute) control loop:
 - Computes organization snapshots every 2 seconds
 - Aggregates CPU/memory via EMA smoothing
-- Implements autoscaling with cooldown (10s) and hysteresis
+- Implements autoscaling with cooldown (15s) and hysteresis
 - Threshold: 60% target utilization, 1s queue alarm
-- Max 100 VMs per org, max 3 VMs scale step
+- Max 100 VMs per org (also capped by the organization quota), max 2 VMs per scale step
 
 ### simulation_engine.py
 CloudSim-style discrete-event simulation:
@@ -224,7 +224,7 @@ Dashboard topology visualization component for frontend integration
 ### Environment Variables
 ```bash
 FLASK_ENV=development
-DATABASE_URL=postgresql://abdur:admin123@localhost/cloud_simulator
+DATABASE_URL=postgresql://<user>:<password>@localhost/cloud_simulator  # set in backend/.env, never commit
 REDIS_URL=redis://localhost:6379/0
 SECRET_KEY=<secret>
 JWT_SECRET_KEY=<jwt-secret>

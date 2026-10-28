@@ -367,7 +367,7 @@ const ScenarioDetail = () => {
               </div>
               <div className="mt-2 h-2 w-full rounded-full bg-gray-200 dark:bg-gray-700">
                 <div
-                  className="h-2 rounded-full bg-primary-600 transition-all"
+                  className="h-2 rounded-full bg-primary-600 transition"
                   style={{ width: `${progressPercent}%` }}
                 />
               </div>
@@ -567,7 +567,7 @@ const ScenarioDetail = () => {
                     </div>
                     <div className="h-2 w-full rounded-full bg-gray-200 dark:bg-gray-700">
                       <div
-                        className="h-2 rounded-full bg-blue-500 transition-all"
+                        className="h-2 rounded-full bg-blue-500 transition"
                         style={{ width: `${((simRun.currentTick || 0) / Math.max(1, simRun.totalTicks)) * 100}%` }}
                       />
                     </div>

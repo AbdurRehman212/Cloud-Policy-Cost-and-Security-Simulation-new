@@ -66,6 +66,7 @@ dist/
 
 # ── Ad-hoc test / utility scripts ───────────────────────────────────────────────
 test_*.py
+!backend/tests/test_*.py
 flow_test.py
 clear_resources.py
 

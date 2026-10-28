@@ -279,6 +279,7 @@ const Security = () => {
           <button
             onClick={() => setShowSimulateModal(true)}
             className="btn-secondary flex items-center space-x-2"
+            data-tour="simulate-attack"
           >
             <BugAntIcon className="w-5 h-5" />
             <span>Simulate Attack</span>
@@ -299,7 +300,7 @@ const Security = () => {
               </p>
               {securityScore === null ? (
                 <p className="text-lg font-semibold text-gray-500 dark:text-gray-400">
-                  Awaiting backend data
+                  Not available yet
                 </p>
               ) : (
                 <p className="text-3xl font-bold text-success-600">{securityScore}/100</p>
@@ -308,7 +309,7 @@ const Security = () => {
             <ShieldCheckIcon className="w-12 h-12 text-success-500" />
           </div>
           <p className="mt-2 text-xs text-gray-500 dark:text-gray-400">
-            Source: {securityScoreSource === "dashboard-summary" ? "dashboard snapshot" : "backend pending"}
+            {securityScoreSource === "dashboard-summary" ? "Taken from the dashboard snapshot." : "Shown once security data exists for this organization."}
           </p>
         </div>
         <div className="card">
@@ -337,7 +338,7 @@ const Security = () => {
             <ShieldCheckIcon className="w-12 h-12 text-primary-500" />
           </div>
           <p className="mt-2 text-xs text-gray-500 dark:text-gray-400">
-            Backend-acknowledged threat history.
+            Threats that were marked as resolved.
           </p>
         </div>
       </div>
@@ -359,7 +360,7 @@ const Security = () => {
               Alert Rules
             </h3>
             <p className="text-sm text-gray-500 dark:text-gray-400">
-              Backend-owned rules applied to newly persisted threats in this organization.
+              Rules that run automatically whenever a new threat is recorded for this organization.
             </p>
           </div>
           {alertRulesLoading && (
@@ -379,6 +380,7 @@ const Security = () => {
           <form className="mb-6 grid grid-cols-1 gap-3 md:grid-cols-5" onSubmit={handleCreateAlertRule}>
             <input
               className="input-field md:col-span-2"
+              aria-label="Rule name"
               value={ruleDraft.name}
               onChange={(event) =>
                 setRuleDraft((current) => ({ ...current, name: event.target.value }))
@@ -388,6 +390,7 @@ const Security = () => {
             />
             <select
               className="input-field"
+              aria-label="Condition field"
               value={ruleDraft.conditionField}
               onChange={(event) =>
                 setRuleDraft((current) => ({
@@ -410,6 +413,7 @@ const Security = () => {
             </select>
             <select
               className="input-field"
+              aria-label="Condition operator"
               value={ruleDraft.conditionOperator}
               onChange={(event) =>
                 setRuleDraft((current) => ({ ...current, conditionOperator: event.target.value }))
@@ -430,6 +434,7 @@ const Security = () => {
             </select>
             <input
               className="input-field"
+              aria-label="Condition value"
               value={ruleDraft.conditionValue}
               onChange={(event) =>
                 setRuleDraft((current) => ({ ...current, conditionValue: event.target.value }))
@@ -439,6 +444,7 @@ const Security = () => {
             />
             <select
               className="input-field md:col-span-2"
+              aria-label="Rule action"
               value={ruleDraft.actionType}
               onChange={(event) =>
                 setRuleDraft((current) => ({ ...current, actionType: event.target.value }))
@@ -531,7 +537,7 @@ const Security = () => {
         </div>
       </div>
       {/* Threats Table */}
-      <div className="card">
+      <div className="card" data-tour="threats-table">
         <div className="mb-4 flex items-center justify-between gap-3">
           <h3 className="text-lg font-semibold text-gray-900 dark:text-white">
             Detected Threats
@@ -542,7 +548,7 @@ const Security = () => {
             </span>
           )}
         </div>
-        <div className="overflow-x-auto">
+        <div className="overflow-x-auto" tabIndex={0} role="region" aria-label="Detected threats table">
           <table className="w-full">
             <thead className="bg-gray-50 dark:bg-gray-700">
               <tr>
@@ -586,17 +592,26 @@ const Security = () => {
                     </span>
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap">
-                    <div className="flex items-center">
-                      <div className="w-16 bg-gray-200 dark:bg-gray-700 rounded-full h-2 mr-2">
-                        <div
-                          className="bg-primary-600 h-2 rounded-full"
-                          style={{ width: `${threat.confidence_score * 100}%` }}
-                        ></div>
-                      </div>
-                      <span className="text-sm text-gray-600 dark:text-gray-400">
-                        {(threat.confidence_score * 100).toFixed(1)}%
+                    {threat.model_version === "simulation" ? (
+                      <span
+                        className="inline-flex rounded-full bg-gray-100 px-2 py-0.5 text-xs font-medium text-gray-700 dark:bg-gray-700 dark:text-gray-200"
+                        title="Created by Simulate Attack for practice. It is not a model prediction, so it has no confidence score."
+                      >
+                        Simulated (no model score)
                       </span>
-                    </div>
+                    ) : (
+                      <div className="flex items-center">
+                        <div className="w-16 bg-gray-200 dark:bg-gray-700 rounded-full h-2 mr-2">
+                          <div
+                            className="bg-primary-600 h-2 rounded-full"
+                            style={{ width: `${threat.confidence_score * 100}%` }}
+                          ></div>
+                        </div>
+                        <span className="text-sm text-gray-600 dark:text-gray-400">
+                          {(threat.confidence_score * 100).toFixed(1)}%
+                        </span>
+                      </div>
+                    )}
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap">
                     <span
@@ -704,15 +719,16 @@ const Security = () => {
               Simulate Attack
             </h2>
             <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">
-              This will simulate an attack for training purposes. The AI will
-              detect and respond to the threat.
+              This creates a practice attack record so you can learn how to review and resolve a
+              threat. The record is generated by the simulator for training; it is not a prediction
+              by the machine-learning detector.
             </p>
             <div className="space-y-4">
               <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1" htmlFor="security-f1">
                   Attack Type
                 </label>
-                <select
+                <select id="security-f1"
                   className="input-field"
                   value={attackType}
                   onChange={(e) => setAttackType(e.target.value)}

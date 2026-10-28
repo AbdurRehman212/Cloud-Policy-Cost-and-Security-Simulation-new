@@ -1,6 +1,7 @@
 from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from app import db, socketio
+from app.utils.rbac import active_membership
 from app.models.security import AlertRule, SecurityLog, ThreatDetection, RemediationAction, ThreatType, ThreatSeverity
 from app.models.organization import OrganizationMember
 from app.services.alert_rule_service import (
@@ -79,7 +80,7 @@ def _get_org_membership(org_id, user_id):
     if org_id is None:
         return None
 
-    return OrganizationMember.query.filter_by(organization_id=org_id, user_id=user_id).first()
+    return active_membership(user_id, org_id)
 
 
 def _is_security_manager(member):
@@ -397,6 +398,8 @@ def analyze_traffic():
     member = _get_org_membership(org_id, user_id)
     if not member:
         return jsonify({'error': 'Access denied'}), 403
+    if member.role == 'viewer':  # analysis can persist threat records and trigger alert rules
+        return jsonify({'error': 'Viewers cannot run threat analysis'}), 403
     # Simulate current metrics
     current_metrics = {
         'requests_per_minute': data.get('requests_per_minute', 1000),
@@ -432,7 +435,7 @@ def analyze_traffic():
             affected_resources=data.get('resource_ids', []),
             attack_vectors={'metrics': current_metrics},
             network_traffic_snapshot=current_metrics,
-            model_version=result.get('source'),
+            model_version=(result.get('model_version') or result.get('source') or '')[:20],
             detection_pattern=f'{result.get("threat_type", "suspicious_behavior")} traffic pattern detected',
         )
         db.session.add(threat)
@@ -514,6 +517,15 @@ def resolve_threat(threat_id):
     db.session.commit()
     _emit_security_updates(threat.organization_id, {'threat': threat.to_dict(), 'status': 'resolved'})
     return jsonify({'message': 'Threat marked as resolved'}), 200
+@security_bp.route('/model-info', methods=['GET'])
+@jwt_required()
+def model_info():
+    """What the running backend actually loaded (for transparency and viva questions)."""
+    if not threat_detector:
+        return jsonify({'backend': 'rule-based', 'version': 'basic_threat_analysis'}), 200
+    return jsonify({**threat_detector.model_info, 'backend': threat_detector.backend}), 200
+
+
 @security_bp.route('/simulate', methods=['POST'])
 @security_bp.route('/simulate-attack', methods=['POST'])
 @jwt_required()

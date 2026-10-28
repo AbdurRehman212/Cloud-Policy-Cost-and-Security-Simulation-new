@@ -16,7 +16,7 @@ const fallbackPlans = [
       'Dashboard, resources, security, cost, governance, and settings',
       'Single organization workspace',
       'Basic simulated cloud actions',
-      'Local AI assistant support',
+      'Local help assistant',
     ],
     future: 'Good for individual students and basic project demos.',
   },
@@ -115,7 +115,7 @@ const Membership = () => {
           Current plan: <span className="font-semibold">{currentPlan.toUpperCase()}</span>
         </p>
         {apiWarning ? (
-          <p className="text-sm text-amber-600 dark:text-amber-400 mt-2">{apiWarning}</p>
+          <p className="text-sm text-amber-700 dark:text-amber-400 mt-2">{apiWarning}</p>
         ) : null}
       </div>
 
@@ -158,7 +158,7 @@ const Membership = () => {
       <div className="card">
         <h2 className="text-lg font-semibold text-gray-900 dark:text-white">How this can be used later</h2>
         <p className="text-sm text-gray-600 dark:text-gray-400 mt-2">
-          In a future version, membership can control quotas, advanced reports, premium AI assistant behavior,
+          In a future version, membership can control quotas, advanced reports, premium assistant features,
           team collaboration, and deployment options while keeping the core simulator available to everyone.
         </p>
       </div>

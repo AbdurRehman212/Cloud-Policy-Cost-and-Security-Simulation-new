@@ -108,8 +108,11 @@ def _create_autoscale_vm(org_id: int, instance_type: str, base_rps: int, pattern
     from app.models.resources import Database
     current_vms = VirtualMachine.query.filter_by(organization_id=org_id).filter(VirtualMachine.status != ResourceStatus.TERMINATED).count()
     current_dbs = Database.query.filter_by(organization_id=org_id).filter(Database.status != ResourceStatus.TERMINATED).count()
-    if current_vms + current_dbs >= _GLOBAL_MAX_VMS:
-        raise Exception(f"Organization has reached the maximum allowed limit of {_GLOBAL_MAX_VMS} resources.")
+    from app.models.organization import Organization
+    org = Organization.query.get(org_id)
+    limit = min(_GLOBAL_MAX_VMS, int(getattr(org, 'max_resources', None) or _GLOBAL_MAX_VMS))  # honour the org quota
+    if current_vms + current_dbs >= limit:
+        raise Exception(f"Organization has reached the maximum allowed limit of {limit} resources.")
     
     spec = _INSTANCE_SPECS.get(instance_type, _INSTANCE_SPECS["t2.medium"])
     sequence = _next_autoscale_sequence(org_id)
