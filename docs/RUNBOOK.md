@@ -27,3 +27,9 @@ New accounts (created < 24 h ago) are offered a tour after login; everyone can r
 
 ## Threat-detector evidence
 `cd backend && python scripts/evaluate_threat_detector.py` prints the measured metrics quoted in `docs/ML_EVIDENCE.md`.
+
+## Operational notes
+- `POST /api/admin/reset-system` deletes data for every organization and is **disabled** (404) unless `ALLOW_SYSTEM_RESET=true` is set in `backend/.env`. Prefer `python backend/scripts/reset_system.py` for a local reset.
+- `GET /api/security/model-info` (any signed-in user) shows which threat model version/features the running backend loaded.
+- UI/accessibility sweep: `cd e2e && npx playwright test tests/ui-quality.spec.js` (add `E2E_SHOTS=<dir>` to save screenshots). Details and findings: `docs/ENGINEERING_QUALITY_REPORT.md`.
+- CI (`.github/workflows/ci.yml`) runs backend tests on PostgreSQL and the frontend build; Playwright is run locally.

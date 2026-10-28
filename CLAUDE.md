@@ -156,9 +156,9 @@ User (account) → OrganizationMember (role-based) → Organization (tenant)
 MAPE (Monitor-Analyze-Plan-Execute) control loop:
 - Computes organization snapshots every 2 seconds
 - Aggregates CPU/memory via EMA smoothing
-- Implements autoscaling with cooldown (10s) and hysteresis
+- Implements autoscaling with cooldown (15s) and hysteresis
 - Threshold: 60% target utilization, 1s queue alarm
-- Max 100 VMs per org, max 3 VMs scale step
+- Max 100 VMs per org (also capped by the organization quota), max 2 VMs per scale step
 
 ### simulation_engine.py
 CloudSim-style discrete-event simulation:
