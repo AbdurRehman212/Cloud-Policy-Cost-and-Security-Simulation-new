@@ -14,7 +14,7 @@ const REPORT_TYPES = [
   {
     key: 'summary',
     label: 'Summary Report',
-    description: 'Organization overview: resource count, active threats, month-to-date spend.',
+    description: 'Organization overview: resources, spend, active threats and governance score.',
     icon: DocumentChartBarIcon,
     endpoint: 'summary.pdf',
   },
@@ -32,7 +32,34 @@ const REPORT_TYPES = [
     icon: DocumentChartBarIcon,
     endpoint: 'security.pdf',
   },
+  {
+    key: 'governance',
+    label: 'Governance Report',
+    description: 'Policy compliance: governance score breakdown and open violations from the latest check.',
+    icon: DocumentChartBarIcon,
+    endpoint: 'governance.pdf',
+  },
 ];
+
+const CSV_EXPORTS = [
+  { key: 'costs', label: 'Cost Records (CSV)', filtered: true },
+  { key: 'security', label: 'Security Events (CSV)', filtered: true },
+  { key: 'governance', label: 'Governance Violations (CSV)', filtered: false },
+];
+
+// Blob responses hide the JSON error body; read the message out of it.
+const blobErrorMessage = async (err, fallback) => {
+  const data = err?.response?.data;
+  try {
+    if (data instanceof Blob) {
+      const parsed = JSON.parse(await data.text());
+      return parsed?.error?.message || parsed?.error || fallback;
+    }
+  } catch (_ignored) {
+    // fall through to the generic message
+  }
+  return err?.response?.data?.error?.message || fallback;
+};
 
 const Spinner = () => (
   <div className="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent inline-block mr-2" />
@@ -45,6 +72,15 @@ const Reports = () => {
 
   const [pdfLoading, setPdfLoading] = useState(null);
   const [csvLoading, setCsvLoading] = useState(null);
+  const [startDate, setStartDate] = useState('');
+  const [endDate, setEndDate] = useState('');
+
+  const rangeError =
+    startDate && endDate && startDate > endDate ? 'Start date must not be after end date.' : null;
+  const rangeParams = () => ({
+    ...(startDate ? { start_date: startDate } : {}),
+    ...(endDate ? { end_date: endDate } : {}),
+  });
 
   const headers = token ? { Authorization: `Bearer ${token}` } : {};
 
@@ -59,12 +95,13 @@ const Reports = () => {
 
   const handleGeneratePdf = async (reportType, endpoint) => {
     if (!orgId) { toast.error('No organization selected'); return; }
+    if (rangeError) { toast.error(rangeError); return; }
     setPdfLoading(reportType);
     try {
       const res = await axios.get(
         `${API_URL}/reports/${endpoint}`,
         {
-          params: { organization_id: orgId },
+          params: { organization_id: orgId, ...rangeParams() },
           headers,
           responseType: 'blob',
         }
@@ -72,7 +109,7 @@ const Reports = () => {
       downloadBlob(res.data, `${reportType}_report_${new Date().toISOString().slice(0,10)}.pdf`, 'application/pdf');
       toast.success(`${reportType} report downloaded`);
     } catch (err) {
-      toast.error(err?.response?.data?.error?.message || 'Failed to generate PDF');
+      toast.error(await blobErrorMessage(err, 'Failed to generate PDF'));
     } finally {
       setPdfLoading(null);
     }
@@ -80,17 +117,18 @@ const Reports = () => {
 
   const handleExportCsv = async (dataType) => {
     if (!orgId) { toast.error('No organization selected'); return; }
+    if (rangeError) { toast.error(rangeError); return; }
     setCsvLoading(dataType);
     try {
       const res = await axios.get(`${API_URL}/reports/export/csv`, {
-        params: { organization_id: orgId, type: dataType },
+        params: { organization_id: orgId, type: dataType, ...rangeParams() },
         headers,
         responseType: 'blob',
       });
       downloadBlob(res.data, `${dataType}_export_${new Date().toISOString().slice(0,10)}.csv`, 'text/csv');
       toast.success(`${dataType} CSV downloaded`);
     } catch (err) {
-      toast.error(err?.response?.data?.error?.message || 'Failed to export CSV');
+      toast.error(await blobErrorMessage(err, 'Failed to export CSV'));
     } finally {
       setCsvLoading(null);
     }
@@ -113,6 +151,30 @@ const Reports = () => {
         </p>
       </div>
 
+      {/* Filters */}
+      <div className="card p-6 space-y-3">
+        <h2 className="text-lg font-semibold text-gray-900 dark:text-white">Report Period</h2>
+        <p className="text-sm text-gray-500 dark:text-gray-400">
+          Optional. Applies to cost and security reports and exports; the governance report always reflects the latest compliance check.
+        </p>
+        <div className="flex flex-wrap items-end gap-4">
+          <label className="text-sm text-gray-700 dark:text-gray-300">
+            From
+            <input type="date" className="input-field mt-1" value={startDate} onChange={(e) => setStartDate(e.target.value)} />
+          </label>
+          <label className="text-sm text-gray-700 dark:text-gray-300">
+            To
+            <input type="date" className="input-field mt-1" value={endDate} onChange={(e) => setEndDate(e.target.value)} />
+          </label>
+          {(startDate || endDate) && (
+            <button type="button" className="text-sm text-primary-600 hover:underline" onClick={() => { setStartDate(''); setEndDate(''); }}>
+              Clear
+            </button>
+          )}
+        </div>
+        {rangeError && <p className="text-sm text-red-600 dark:text-red-400">{rangeError}</p>}
+      </div>
+
       {/* PDF Reports */}
       <div className="card p-6 space-y-4">
         <div className="flex items-center gap-2">
@@ -122,7 +184,7 @@ const Reports = () => {
         <p className="text-sm text-gray-500 dark:text-gray-400">
           Formatted PDF reports suitable for academic submission or stakeholder review.
         </p>
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           {REPORT_TYPES.map(({ key, label, description, icon: Icon, endpoint }) => (
             <div
               key={key}
@@ -157,10 +219,7 @@ const Reports = () => {
           Raw data exports for offline analysis or dataset verification.
         </p>
         <div className="flex flex-wrap gap-3">
-          {[
-            { key: 'costs', label: 'Cost Records (CSV)' },
-            { key: 'security', label: 'Security Events (CSV)' },
-          ].map(({ key, label }) => (
+          {CSV_EXPORTS.map(({ key, label }) => (
             <button
               key={key}
               onClick={() => handleExportCsv(key)}
