@@ -36,6 +36,7 @@ const CostManagement = () => {
   const [showBudgetModal, setShowBudgetModal] = useState(false);
   const [editingBudgetId, setEditingBudgetId] = useState(null);
   const [learningActionKey, setLearningActionKey] = useState(null);
+  const [resourceCosts, setResourceCosts] = useState(null);
   const [budgetForm, setBudgetForm] = useState({
     name: "Monthly Cloud Budget",
     amount: "",
@@ -51,6 +52,12 @@ const CostManagement = () => {
       dispatch(fetchCurrentCosts(currentOrganization.id));
       dispatch(fetchForecast({ orgId: currentOrganization.id, days: 30 }));
       dispatch(fetchOptimization(currentOrganization.id));
+      apiClient
+        .get("/cost/summary", {
+          params: { organization_id: currentOrganization.id },
+        })
+        .then((res) => setResourceCosts(res.data?.by_resource || []))
+        .catch(() => setResourceCosts([]));
     }
   }, [dispatch, currentOrganization]);
   const handleCreateBudget = async (event) => {
@@ -452,6 +459,46 @@ const CostManagement = () => {
             </div>
           )}
         </div>
+      </div>
+      {/* Per-resource costs */}
+      <div className="card">
+        <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">
+          Cost by Resource
+        </h3>
+        {resourceCosts?.length > 0 ? (
+          <div className="overflow-x-auto">
+            <table className="min-w-full text-sm" data-testid="resource-cost-table">
+              <thead>
+                <tr className="text-left text-gray-500 dark:text-gray-400">
+                  <th className="py-2 pr-4">Resource</th>
+                  <th className="py-2 pr-4">Type</th>
+                  <th className="py-2 pr-4 text-right">Compute</th>
+                  <th className="py-2 pr-4 text-right">Storage</th>
+                  <th className="py-2 pr-4 text-right">Network</th>
+                  <th className="py-2 text-right">Total</th>
+                </tr>
+              </thead>
+              <tbody className="text-gray-900 dark:text-white">
+                {resourceCosts.map((row) => (
+                  <tr key={row.resource_id} className="border-t border-gray-200 dark:border-gray-700">
+                    <td className="py-2 pr-4">{row.name}</td>
+                    <td className="py-2 pr-4 uppercase">{row.resource_type}</td>
+                    <td className="py-2 pr-4 text-right">${Number(row.compute_cost || 0).toFixed(4)}</td>
+                    <td className="py-2 pr-4 text-right">${Number(row.storage_cost || 0).toFixed(4)}</td>
+                    <td className="py-2 pr-4 text-right">${Number(row.network_cost || 0).toFixed(4)}</td>
+                    <td className="py-2 text-right font-medium">${Number(row.total_cost || 0).toFixed(4)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <p className="text-sm text-gray-500 dark:text-gray-400">
+            {resourceCosts === null
+              ? "Loading per-resource costs..."
+              : "No resources with cost data yet."}
+          </p>
+        )}
       </div>
       {/* Budgets */}
       <div className="card">
