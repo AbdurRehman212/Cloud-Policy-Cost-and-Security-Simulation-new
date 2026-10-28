@@ -65,7 +65,7 @@ Verified by tests: viewer/admin/owner/outsider rows for budgets, policies, invit
 | S9 | **M, open** | 62 known advisories in frontend production dependencies (2 critical, 28 high) | not fixed — needs `react-scripts` replacement; build-time tooling dominates |
 | S10 | **M, open** | No rate limiting or lockout on login/register/forgot-password (ASVS V2.2) | not implemented; add Flask-Limiter before any public deployment |
 | S11 | **L, open** | JWT has no revocation list; logout does not invalidate an access token (1 h lifetime) | accepted for the FYP; documented |
-| S12 | **L, open** | The old `abdur:admin123` database password remains in pushed git history | rotate; history not rewritten |
+| S12 | **L, open** | An earlier local database password (role `abdur`) remains in already-published git history. Checked: that role does not exist on the current development server, so it cannot authenticate here; it may still exist on the previous machine | change or drop it there; history not rewritten |
 
 Checked and found acceptable: token required on every non-public route (sweep); outsider reads return no org data (sweep); SQL is
 parameterised through SQLAlchemy (one raw `DELETE` script exists only in the now-disabled reset route and the CLI); passwords hashed with bcrypt;
