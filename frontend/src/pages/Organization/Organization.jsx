@@ -191,7 +191,7 @@ export default function Organization() {
   const canManage = myRole === "owner" || myRole === "admin";
 
   return (
-    <div className="space-y-6 max-w-5xl mx-auto">
+    <div className="space-y-6 max-w-5xl mx-auto" data-tour="org-page">
       <div>
         <h1 className="text-2xl font-bold text-gray-900 dark:text-white">
           {orgDetail?.name}
@@ -267,6 +267,7 @@ export default function Organization() {
             <div className="flex justify-end">
               <button
                 type="button"
+                data-tour="invite-member"
                 onClick={() => setInviteOpen(true)}
                 className="btn-primary"
               >

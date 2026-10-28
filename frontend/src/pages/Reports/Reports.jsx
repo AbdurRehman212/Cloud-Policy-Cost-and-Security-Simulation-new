@@ -176,7 +176,7 @@ const Reports = () => {
       </div>
 
       {/* PDF Reports */}
-      <div className="card p-6 space-y-4">
+      <div className="card p-6 space-y-4" data-tour="reports-pdf">
         <div className="flex items-center gap-2">
           <DocumentArrowDownIcon className="h-5 w-5 text-primary-600 dark:text-primary-400" />
           <h2 className="text-lg font-semibold text-gray-900 dark:text-white">PDF Reports</h2>
@@ -210,7 +210,7 @@ const Reports = () => {
       </div>
 
       {/* CSV Exports */}
-      <div className="card p-6 space-y-4">
+      <div className="card p-6 space-y-4" data-tour="reports-csv">
         <div className="flex items-center gap-2">
           <TableCellsIcon className="h-5 w-5 text-primary-600 dark:text-primary-400" />
           <h2 className="text-lg font-semibold text-gray-900 dark:text-white">CSV Data Exports</h2>

@@ -1436,7 +1436,7 @@ const Resources = () => {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between" data-tour="resources-header">
         <div>
           <h1 className="text-2xl font-bold text-gray-900 dark:text-white">
             Resources
@@ -1466,6 +1466,7 @@ const Resources = () => {
                 setSelectedSecurityGroupIds(defaultSecurityGroupIds);
               }}
               className="btn-primary flex items-center space-x-2"
+              data-tour="create-vm"
             >
               <PlusIcon className="w-5 h-5" />
               <span>Create VM</span>
@@ -1474,7 +1475,7 @@ const Resources = () => {
         )}
       </div>
 
-      <div className="flex items-center space-x-2 border-b border-gray-200 dark:border-gray-700">
+      <div className="flex items-center space-x-2 border-b border-gray-200 dark:border-gray-700" data-tour="resource-tabs">
         <button
           type="button"
           onClick={() => setActiveTab("resources")}
@@ -1501,7 +1502,7 @@ const Resources = () => {
 
       {activeTab === "resources" ? (
         <>
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6" data-tour="resource-grid">
             {resources?.map((resource) => {
               const safeId = resource?.id || "fallback-id";
               const status = (resource?.status || "").toLowerCase();

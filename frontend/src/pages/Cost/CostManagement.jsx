@@ -163,6 +163,7 @@ const CostManagement = () => {
             type="button"
             onClick={() => setShowBudgetModal(true)}
             className="btn-primary"
+            data-tour="create-budget"
           >
             Create Budget
           </button>
@@ -202,7 +203,7 @@ const CostManagement = () => {
             Days with persisted cost activity this month
           </p>
         </div>
-        <div className="card">
+        <div className="card" data-tour="cost-forecast">
           <p className="text-sm font-medium text-gray-600 dark:text-gray-400">
             Forecast (30 days, estimate)
           </p>
@@ -461,7 +462,7 @@ const CostManagement = () => {
         </div>
       </div>
       {/* Per-resource costs */}
-      <div className="card">
+      <div className="card" data-tour="cost-by-resource">
         <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">
           Cost by Resource
         </h3>

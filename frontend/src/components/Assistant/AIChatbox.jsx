@@ -78,8 +78,8 @@ const AIChatbox = () => {
         <div className="w-[360px] sm:w-[400px] h-[520px] mb-4 rounded-2xl shadow-2xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 flex flex-col overflow-hidden">
           <div className="px-4 py-3 bg-primary-600 text-white flex items-center justify-between">
             <div>
-              <p className="font-semibold">AI Assistant</p>
-              <p className="text-xs text-white/80">Project help and quick guidance</p>
+              <p className="font-semibold">Help Assistant</p>
+              <p className="text-xs text-white/80">Rule-based answers about this project</p>
             </div>
             <button onClick={() => setOpen(false)} className="p-1 rounded hover:bg-white/10">
               <XMarkIcon className="w-5 h-5" />
@@ -156,7 +156,7 @@ const AIChatbox = () => {
       <button
         onClick={() => setOpen(!open)}
         className="w-14 h-14 rounded-full shadow-lg bg-primary-600 text-white flex items-center justify-center hover:bg-primary-700 transition-colors"
-        aria-label="Open AI assistant"
+        aria-label="Open help assistant"
       >
         <ChatBubbleLeftRightIcon className="w-7 h-7" />
       </button>

@@ -356,7 +356,7 @@ const Dashboard = () => {
       </div>
 
       {/* ── Dashboard header ── */}
-      <div className="animate-fade-up-1 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+      <div data-tour="dashboard-header" className="animate-fade-up-1 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="text-xl font-bold text-gray-900 dark:text-white tracking-tight">
             Resource Operations Dashboard
@@ -644,7 +644,7 @@ const Dashboard = () => {
       )}
 
       {/* ── 5. Resource Inventory Table ── */}
-      <div className="card">
+      <div className="card" data-tour="dashboard-inventory">
         <div className="mb-4 flex items-center justify-between gap-3">
           <h2 className="text-lg font-semibold text-gray-900 dark:text-white">
             Resource Inventory

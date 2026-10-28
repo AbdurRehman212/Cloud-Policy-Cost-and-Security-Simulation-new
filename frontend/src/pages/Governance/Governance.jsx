@@ -226,12 +226,13 @@ const Governance = () => {
             Governance & Compliance
           </h1>
           <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
-            Backend-owned policy compilation, org-scoped compliance evaluation, and persisted audit history.
+            Write rules in plain text, check your resources against them, and review the history of every check.
           </p>
         </div>
         <div className="flex flex-wrap gap-3">
           <button
             onClick={runComplianceCheck}
+            data-tour="run-compliance"
             disabled={!orgId || runningCheck}
             className="btn-secondary flex items-center space-x-2 disabled:opacity-50"
           >
@@ -242,6 +243,7 @@ const Governance = () => {
             <button
               onClick={() => setShowCreateModal(true)}
               className="btn-primary flex items-center space-x-2"
+              data-tour="create-policy"
             >
               <PlusIcon className="w-5 h-5" />
               <span>Create Policy</span>
@@ -413,7 +415,7 @@ const Governance = () => {
             </div>
 
             <div className="space-y-6">
-              <div className="card">
+              <div className="card" data-tour="governance-score">
                 <h3 className="text-lg font-semibold text-gray-900 dark:text-white">
                   Governance Score
                 </h3>

@@ -7,9 +7,11 @@ const stamp = Date.now().toString(36);
 const user = { first: 'E2E', last: 'Runner', email: `e2e_${stamp}@example.com`, password: 'Str0ng!Pass123' };
 const vmName = `web-e2e-${stamp}`;
 let page;
+const pageErrors = [];
 
 test.beforeAll(async ({ browser }) => {
   page = await (await browser.newContext({ acceptDownloads: true })).newPage();
+  page.on('pageerror', (error) => pageErrors.push(error.message)); // uncaught exceptions only
 });
 test.afterAll(async () => page.context().close());
 
@@ -39,6 +41,8 @@ test('M1 rejects bad credentials, registers and logs in', async () => {
   await page.getByPlaceholder('••••••••').fill(user.password);
   await page.getByRole('button', { name: 'Sign In' }).click();
   await expect(page.getByRole('heading', { name: 'Resource Operations Dashboard' })).toBeVisible();
+  // New accounts are offered the guided tour; the tour itself is covered in tour.spec.js
+  await page.getByTestId('tour-skip-welcome').click();
 });
 
 test('M2 default organization is created with the owner role', async () => {
@@ -92,4 +96,16 @@ test('M9 downloads a PDF and a CSV report', async () => {
     page.getByRole('button', { name: 'Cost Records (CSV)' }).click(),
   ]);
   expect(csv.suggestedFilename()).toMatch(/\.csv$/i);
+});
+
+test('M6 simulated attack is recorded and labelled as simulated, not as a model score', async () => {
+  await goto('/security');
+  await page.getByRole('button', { name: 'Simulate Attack' }).first().click();
+  await expect(page.getByText(/not a prediction\s+by the machine-learning detector/)).toBeVisible();
+  await page.getByRole('button', { name: 'Simulate Attack' }).last().click();
+  await expect(page.getByText('Simulated (no model score)').first()).toBeVisible();
+});
+
+test('no uncaught browser exceptions during the whole journey', async () => {
+  expect(pageErrors).toEqual([]);
 });

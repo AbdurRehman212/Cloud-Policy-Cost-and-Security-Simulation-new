@@ -21,3 +21,9 @@ set TEST_DATABASE_URL=postgresql://<user>:<password>@localhost/cloud_simulator_t
 cd e2e && npm install && npx playwright test                            # needs both servers running
 ```
 `E2E_BASE_URL` overrides the frontend URL. The suite registers a fresh user each run.
+
+## Guided tour
+New accounts (created < 24 h ago) are offered a tour after login; everyone can replay it with **Help / Take a Tour** in the header. State is per user in the browser (`fyp:tour:v1:<userId>`); clear that key to see the offer again. Steps live in `frontend/src/tour/steps.js`; tests: `e2e/tests/tour.spec.js`.
+
+## Threat-detector evidence
+`cd backend && python scripts/evaluate_threat_detector.py` prints the measured metrics quoted in `docs/ML_EVIDENCE.md`.

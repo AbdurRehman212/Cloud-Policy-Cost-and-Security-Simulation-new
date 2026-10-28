@@ -156,3 +156,30 @@
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: #d1d5db; border-radius: 9999px; }
 .dark ::-webkit-scrollbar-thumb { background: #4b5563; }
+
+/* ── Guided tour (driver.js popover) ──────────────────────── */
+.driver-popover.fyp-tour-popover {
+  max-width: min(92vw, 380px);
+  border-radius: 0.75rem;
+  padding: 1rem 1.1rem;
+  background: #fff;
+  color: #1f2937;
+}
+.fyp-tour-popover .driver-popover-title { font-size: 1.05rem; font-weight: 700; color: inherit; }
+.fyp-tour-popover .driver-popover-description { font-size: 0.9rem; line-height: 1.5; color: #4b5563; margin-top: 0.4rem; }
+.fyp-tour-popover .driver-popover-progress-text { font-size: 0.8rem; color: #4b5563; }
+.fyp-tour-popover .driver-popover-footer button {
+  font-size: 0.85rem; padding: 0.4rem 0.8rem; border-radius: 0.5rem;
+  text-shadow: none; background: #f3f4f6; color: #1f2937; border: 1px solid #d1d5db;
+}
+.fyp-tour-popover .driver-popover-footer .driver-popover-next-btn, .fyp-tour-popover .driver-popover-footer .driver-popover-done-btn { background: #2563eb; color: #fff; border-color: #2563eb; }
+.fyp-tour-popover .driver-popover-footer button:focus-visible { outline: 2px solid #2563eb; outline-offset: 2px; }
+.fyp-tour-module { font-size: 0.7rem; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; color: #2563eb; margin-bottom: 0.25rem; }
+.fyp-tour-end { margin-right: auto; background: transparent !important; border-color: transparent !important; color: #4b5563 !important; text-decoration: underline; }
+.dark .driver-popover.fyp-tour-popover { background: #1f2937; color: #f3f4f6; }
+.dark .fyp-tour-popover .driver-popover-description,
+.dark .fyp-tour-popover .driver-popover-progress-text,
+.dark .fyp-tour-end { color: #d1d5db !important; }
+.dark .fyp-tour-popover .driver-popover-footer button { background: #374151; color: #f3f4f6; border-color: #4b5563; }
+.dark .fyp-tour-popover .driver-popover-footer .driver-popover-next-btn, .dark .fyp-tour-popover .driver-popover-footer .driver-popover-done-btn { background: #2563eb; border-color: #2563eb; }
+.dark .fyp-tour-module { color: #93c5fd; }
