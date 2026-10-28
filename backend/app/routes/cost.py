@@ -6,6 +6,7 @@ from flask import Blueprint, jsonify, request
 from flask_jwt_extended import jwt_required, get_jwt_identity
 
 from app import db
+from app.utils.rbac import active_membership
 from app.models.cost import CostRecord, Budget, CostForecast
 from app.models.organization import OrganizationMember
 
@@ -34,7 +35,7 @@ def _resolve_org_id():
 def _require_org_membership(user_id, org_id):
     if org_id is None:
         return None
-    return OrganizationMember.query.filter_by(organization_id=org_id, user_id=user_id).first()
+    return active_membership(user_id, org_id)
 
 
 def _budget_status_for_org(org_id):

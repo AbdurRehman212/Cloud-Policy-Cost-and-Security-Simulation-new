@@ -122,3 +122,29 @@ def test_summary_total_matches_resources_and_trend_for_small_costs(client, world
     assert d['total'] == 0.0029
     assert round(sum(r['total_cost'] for r in d['by_resource']), 4) == d['total']
     assert round(sum(p['total_cost'] for p in d['trend']), 4) == d['total']
+
+
+def test_budget_measures_only_the_current_period(client, world):  # regression: monthly budgets never reset
+    today = date.today()
+    first_of_month = today.replace(day=1)
+    start = (first_of_month - timedelta(days=70)).replace(day=1)  # two or three periods ago
+    add_cost(world['org_a'], start, 500.0, 'i-old')  # belongs to an old period
+    add_cost(world['org_a'], today, 10.0, 'i-now')
+    r = client.post(f'{C}/budgets', json=budget_body(world, amount=100, start_date=start.isoformat()), headers=world['admin'])
+    b = r.get_json()['budget']
+    assert b['current_spend'] == 10.0 and b['percentage_used'] == 10.0
+    assert b['period_start'] == first_of_month.isoformat()
+
+
+def test_budget_period_windows_and_alert_boundaries(client, world):
+    from app.models.cost import Budget
+    add_cost(world['org_a'], date.today(), 50.0)
+    bid = client.post(f'{C}/budgets', json=budget_body(world, amount=100), headers=world['admin']).get_json()['budget']['id']
+    assert client.get(f"{C}/budgets?organization_id={world['org_a']}", headers=world['viewer']).get_json()['budgets'][0]['alert_level'] == 'normal'  # 50 % < 80 %
+    add_cost(world['org_a'], date.today(), 30.0, 'i-b')
+    assert client.get(f"{C}/budgets?organization_id={world['org_a']}", headers=world['viewer']).get_json()['budgets'][0]['alert_level'] == 'warning'  # exactly 80 %
+    add_cost(world['org_a'], date.today(), 20.0, 'i-c')
+    assert client.get(f"{C}/budgets?organization_id={world['org_a']}", headers=world['viewer']).get_json()['budgets'][0]['alert_level'] == 'critical'  # exactly 100 %
+    b = Budget.query.get(bid)
+    assert b._add_months(date(2026, 1, 31), 1) == date(2026, 2, 28)  # month-end clamping
+    assert b._add_months(date(2026, 11, 15), 3) == date(2027, 2, 15)  # year rollover

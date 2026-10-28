@@ -1,4 +1,4 @@
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 from app import db
 class CostRecord(db.Model):
     """Hourly cost records."""
@@ -40,14 +40,39 @@ class Budget(db.Model):
     shutdown_threshold = db.Column(db.Float, default=100.0)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     is_active = db.Column(db.Boolean, default=True)
+    PERIOD_MONTHS = {'monthly': 1, 'quarterly': 3, 'yearly': 12}
+
+    @staticmethod
+    def _add_months(day, months):
+        import calendar
+        index = day.year * 12 + (day.month - 1) + months
+        year, month = divmod(index, 12)
+        return date(year, month + 1, min(day.day, calendar.monthrange(year, month + 1)[1]))
+
+    def period_window(self, today=None):
+        """(start, end) of the budget period that contains `today`.
+
+        Periods repeat from start_date (monthly/quarterly/yearly), so a monthly budget is
+        measured against the current month only. An explicit end_date caps the window.
+        """
+        today = today or date.today()
+        months = self.PERIOD_MONTHS.get(self.period, 1)
+        start = self.start_date
+        while self._add_months(start, months) <= today:
+            start = self._add_months(start, months)
+        end = self._add_months(start, months) - timedelta(days=1)
+        if self.end_date:
+            end = min(end, self.end_date)
+        return start, end
+
     def get_current_spend(self):
-        """Calculate current period spend."""
-        # This would query CostRecord for current period
+        """Spend recorded inside the current budget period."""
         from sqlalchemy import func
+        start, end = self.period_window()
         result = db.session.query(func.sum(CostRecord.total_cost)).filter(
             CostRecord.organization_id == self.organization_id,
-            CostRecord.date >= self.start_date,
-            CostRecord.date <= (self.end_date or date.max),
+            CostRecord.date >= start,
+            CostRecord.date <= end,
         ).scalar()
         return result or 0.0
     def to_dict(self):
@@ -68,6 +93,8 @@ class Budget(db.Model):
             'period': self.period,
             'start_date': self.start_date.isoformat() if self.start_date else None,
             'end_date': self.end_date.isoformat() if self.end_date else None,
+            'period_start': self.period_window()[0].isoformat(),
+            'period_end': self.period_window()[1].isoformat(),
             'current_spend': round(current, 2),
             'remaining': round(self.amount - current, 2),
             'percentage_used': percentage,
