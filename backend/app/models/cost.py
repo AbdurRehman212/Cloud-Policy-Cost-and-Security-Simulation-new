@@ -46,20 +46,32 @@ class Budget(db.Model):
         from sqlalchemy import func
         result = db.session.query(func.sum(CostRecord.total_cost)).filter(
             CostRecord.organization_id == self.organization_id,
-            CostRecord.date >= self.start_date
+            CostRecord.date >= self.start_date,
+            CostRecord.date <= (self.end_date or date.max),
         ).scalar()
         return result or 0.0
     def to_dict(self):
         current = self.get_current_spend()
+        percentage = round((current / self.amount) * 100, 2) if self.amount > 0 else 0
+        if percentage >= self.alert_threshold_3:
+            alert_level = 'critical'
+        elif percentage >= self.alert_threshold_2:
+            alert_level = 'warning'
+        else:
+            alert_level = 'normal'
         return {
             'id': self.id,
             'org_id': self.organization_id,
             'organization_id': self.organization_id,
             'name': self.name,
             'amount': self.amount,
+            'period': self.period,
+            'start_date': self.start_date.isoformat() if self.start_date else None,
+            'end_date': self.end_date.isoformat() if self.end_date else None,
             'current_spend': round(current, 2),
             'remaining': round(self.amount - current, 2),
-            'percentage_used': round((current / self.amount) * 100, 2) if self.amount > 0 else 0,
+            'percentage_used': percentage,
+            'alert_level': alert_level,
             'alert_thresholds': {
                 'warning': self.alert_threshold_1,
                 'critical': self.alert_threshold_2,

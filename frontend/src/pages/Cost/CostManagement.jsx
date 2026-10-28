@@ -34,6 +34,7 @@ const CostManagement = () => {
     currentOrganization?.my_role === "admin" ||
     currentOrganization?.my_role === "owner";
   const [showBudgetModal, setShowBudgetModal] = useState(false);
+  const [editingBudgetId, setEditingBudgetId] = useState(null);
   const [learningActionKey, setLearningActionKey] = useState(null);
   const [budgetForm, setBudgetForm] = useState({
     name: "Monthly Cloud Budget",
@@ -56,28 +57,72 @@ const CostManagement = () => {
     event.preventDefault();
     if (!currentOrganization?.id) return;
 
+    const payload = {
+      organization_id: currentOrganization.id,
+      ...budgetForm,
+      amount: Number(budgetForm.amount),
+      alert_threshold_1: Number(budgetForm.alert_threshold_1),
+      alert_threshold_2: Number(budgetForm.alert_threshold_2),
+      alert_threshold_3: Number(budgetForm.alert_threshold_3),
+    };
+    if (!(payload.amount > 0)) {
+      toast.error("Budget amount must be greater than 0");
+      return;
+    }
+    if (
+      !(payload.alert_threshold_1 > 0 &&
+        payload.alert_threshold_1 <= payload.alert_threshold_2 &&
+        payload.alert_threshold_2 <= payload.alert_threshold_3)
+    ) {
+      toast.error("Alert thresholds must be positive and in ascending order");
+      return;
+    }
+
     try {
-      await apiClient.post(
-        "/cost/budgets",
-        {
-          organization_id: currentOrganization.id,
-          ...budgetForm,
-          amount: Number(budgetForm.amount),
-          alert_threshold_1: Number(budgetForm.alert_threshold_1),
-          alert_threshold_2: Number(budgetForm.alert_threshold_2),
-          alert_threshold_3: Number(budgetForm.alert_threshold_3),
-        },
-      );
-      toast.success("Budget created successfully");
-      setLearningActionKey("cost_budget_created");
-      setShowBudgetModal(false);
-      setBudgetForm((previous) => ({
-        ...previous,
-        amount: "",
-      }));
+      if (editingBudgetId) {
+        await apiClient.put(`/cost/budgets/${editingBudgetId}`, payload);
+        toast.success("Budget updated");
+      } else {
+        await apiClient.post("/cost/budgets", payload);
+        toast.success("Budget created successfully");
+        setLearningActionKey("cost_budget_created");
+      }
+      closeBudgetModal();
       dispatch(fetchCurrentCosts(currentOrganization.id));
     } catch (error) {
-      toast.error(error.response?.data?.error || "Failed to create budget");
+      toast.error(
+        error.response?.data?.error ||
+          (editingBudgetId ? "Failed to update budget" : "Failed to create budget"),
+      );
+    }
+  };
+  const closeBudgetModal = () => {
+    setShowBudgetModal(false);
+    setEditingBudgetId(null);
+    setBudgetForm((previous) => ({ ...previous, amount: "" }));
+  };
+  const openEditBudget = (budget) => {
+    setEditingBudgetId(budget.id);
+    setBudgetForm({
+      name: budget.name,
+      amount: String(budget.amount),
+      start_date: budget.start_date || new Date().toISOString().slice(0, 10),
+      period: budget.period || "monthly",
+      alert_threshold_1: budget.alert_thresholds?.warning ?? 50,
+      alert_threshold_2: budget.alert_thresholds?.critical ?? 80,
+      alert_threshold_3: budget.alert_thresholds?.exceeded ?? 100,
+      auto_shutdown_at_threshold: false,
+    });
+    setShowBudgetModal(true);
+  };
+  const deleteBudget = async (budget) => {
+    if (!window.confirm(`Delete budget "${budget.name}"?`)) return;
+    try {
+      await apiClient.delete(`/cost/budgets/${budget.id}`);
+      toast.success("Budget deleted");
+      dispatch(fetchCurrentCosts(currentOrganization.id));
+    } catch (error) {
+      toast.error(error.response?.data?.error || "Failed to delete budget");
     }
   };
   const serviceData = currentCosts?.current_month?.by_service
@@ -152,11 +197,21 @@ const CostManagement = () => {
         </div>
         <div className="card">
           <p className="text-sm font-medium text-gray-600 dark:text-gray-400">
-            Forecast (30 days)
+            Forecast (30 days, estimate)
           </p>
           <p className="text-2xl font-bold text-gray-900 dark:text-white">
             ${forecast?.total_predicted?.toFixed(2) || "0.00"}
           </p>
+          {forecast?.note && (
+            <p className="mt-1 text-xs text-amber-600 dark:text-amber-400">
+              {forecast.note}
+            </p>
+          )}
+          {forecast && !forecast.note && (
+            <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+              Linear trend over {forecast.history_days} day(s) of simulated cost history.
+            </p>
+          )}
         </div>
         <div className="card">
           <p className="text-sm font-medium text-gray-600 dark:text-gray-400">
@@ -193,7 +248,7 @@ const CostManagement = () => {
             <div className="mb-4 flex items-start justify-between gap-4">
               <div>
                 <h2 className="text-xl font-bold text-gray-900 dark:text-white">
-                  Create Budget
+                  {editingBudgetId ? "Edit Budget" : "Create Budget"}
                 </h2>
                 <p className="text-sm text-gray-500 dark:text-gray-400">
                   Set a monthly budget and alert thresholds for this
@@ -202,7 +257,7 @@ const CostManagement = () => {
               </div>
               <button
                 type="button"
-                onClick={() => setShowBudgetModal(false)}
+                onClick={closeBudgetModal}
                 className="text-gray-500 hover:text-gray-900 dark:text-gray-400 dark:hover:text-white"
               >
                 ×
@@ -324,7 +379,7 @@ const CostManagement = () => {
                 <button
                   type="button"
                   className="btn-secondary"
-                  onClick={() => setShowBudgetModal(false)}
+                  onClick={closeBudgetModal}
                 >
                   Cancel
                 </button>
@@ -398,6 +453,45 @@ const CostManagement = () => {
           )}
         </div>
       </div>
+      {/* Budgets */}
+      <div className="card">
+        <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">
+          Budgets
+        </h3>
+        {activeBudgets.length > 0 ? (
+          <div className="space-y-3">
+            {activeBudgets.map((budget) => (
+              <div
+                key={budget.id}
+                className="flex flex-col gap-2 rounded-lg bg-gray-50 p-4 dark:bg-gray-700/50 sm:flex-row sm:items-center sm:justify-between"
+              >
+                <div>
+                  <p className="font-medium text-gray-900 dark:text-white">
+                    {budget.name} <span className="text-xs text-gray-500">({budget.period})</span>
+                  </p>
+                  <p className="text-sm text-gray-500 dark:text-gray-400">
+                    ${Number(budget.current_spend).toFixed(2)} of ${Number(budget.amount).toFixed(2)} ({Number(budget.percentage_used).toFixed(1)}%), alert level: {budget.alert_level}
+                  </p>
+                </div>
+                {canManageBudgets && (
+                  <div className="flex gap-3 text-sm">
+                    <button type="button" onClick={() => openEditBudget(budget)} className="text-primary-600 hover:underline">
+                      Edit
+                    </button>
+                    <button type="button" onClick={() => deleteBudget(budget)} className="text-red-600 hover:underline">
+                      Delete
+                    </button>
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        ) : (
+          <p className="text-sm text-gray-500 dark:text-gray-400">
+            No budgets yet.{canManageBudgets ? " Use Create Budget to add one." : ""}
+          </p>
+        )}
+      </div>
       {/* Optimization Recommendations */}
       <div className="card">
         <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">
@@ -415,17 +509,20 @@ const CostManagement = () => {
                     {item.instance_id || "Resource optimization"}
                   </p>
                   <p className="text-sm text-gray-500 dark:text-gray-400">
-                    {item.reason || item.recommendation}
+                    {item.recommendation}
                   </p>
+                  {item.reason && (
+                    <p className="text-xs text-gray-500 dark:text-gray-400">
+                      Rule {item.rule}: {item.reason}
+                    </p>
+                  )}
                 </div>
                 <div className="text-right">
                   <p className="text-lg font-bold text-success-600">
                     Save ${item.potential_monthly_savings?.toFixed(2) || "0.00"}
                     /mo
                   </p>
-                  <button className="text-sm text-primary-600 hover:text-primary-500">
-                    Review
-                  </button>
+                  <p className="text-xs text-gray-500 dark:text-gray-400">estimated</p>
                 </div>
               </div>
             ))
