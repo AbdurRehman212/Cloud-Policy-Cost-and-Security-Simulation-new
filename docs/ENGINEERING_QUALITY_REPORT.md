@@ -13,7 +13,7 @@ Cheat Sheet (deny by default, least privilege, validate on every request), WCAG 
 | 2 Design | **Partial** | Layered Flask blueprints + service layer. Gaps: schema is created by `db.create_all()` and `backend/migrations` holds only 2 revisions, so column changes to existing databases are not migrated (**M**); CLAUDE.md autoscaling numbers were wrong (fixed). |
 | 3 Implementation | **Good after fixes** | 1 Critical, 2 High, 4 Medium defects fixed in this pass (section 3). |
 | 4 Verification | **Good** | 57 backend tests (SQLite + PostgreSQL), 48 live API checks, 16 live authorization checks, 20 Playwright tests, route sweeps (no-token, cross-tenant, viewer-write). |
-| 5 Release readiness | **Partial** | Pinned backend deps now match the tested environment; CI workflow added but **not yet executed on GitHub**; 57 npm advisories in production dependencies at the M10–12 pass (2 critical, 31 high, 14 moderate, 10 low; transitive via `react-scripts` — **M/H**, needs a toolchain migration, not done); no migrations baseline (above). |
+| 5 Release readiness | **Partial** | Pinned backend deps now match the tested environment; CI workflow added but **not yet executed on GitHub**; 29 npm advisories in production dependencies after the pre-publication pass (0 critical, 13 high — all inside the react-scripts build toolchain; was 62, then 57; transitive via `react-scripts` — **M/H**, needs a toolchain migration, not done); no migrations baseline (above). |
 | 6 Maintenance | **Good** | Model version + `GET /api/security/model-info`; runbook; ML evidence note; some `print()` logging remains in routes (**L**). |
 
 ## 2. Modules 1–9 verification matrix
@@ -155,3 +155,18 @@ Skills: installed skills were reviewed (Ponytail, Agent Browser, Playwright Best
 Verification Before Completion, Vercel React, Supabase Postgres, Web Design Guidelines). A skills.sh check found no maintained
 security-review or ML-evaluation skill that adds to Claude Code's built-in `/code-review` and `/security-review` and the
 scripted evaluation, so **nothing new was installed**.
+
+## 10. Pre-publication pass (GitHub push)
+
+| Area | Finding | Action / evidence |
+|---|---|---|
+| Backend dependencies | pip-audit: 51 advisories in 9 pinned packages (PyJWT 2.8 had 19) | Upgraded Flask 3.1.3, Flask-SQLAlchemy 3.1.1, Flask-JWT-Extended 4.7.1, PyJWT 2.15.0, Flask-CORS 6.0.0, Flask-Mail 0.10.0, Flask-SocketIO 5.7.2, python-socketio 5.18.0, eventlet 0.40.3, gunicorn 22.0.0, requests 2.33.0, python-dotenv 1.2.2, pytest 9.0.3, pytest-flask 1.3.0. Remaining: scikit-learn PYSEC-2024-110 (TfidfVectorizer stop words; not used here; upgrading would change the evaluated model) — ignored explicitly in CI with this justification. |
+| Breaking change (H) | PyJWT ≥ 2.10 rejects a non-string `sub`; the app issued integer identities → every protected route 422 | `user_identity_loader` writes the id as a string; `app/utils/identity.get_jwt_identity` returns it as int for the 84 call sites |
+| Breaking change (H) | Flask-SocketIO 5.3.6 is incompatible with Flask 3.1 (every socket event crashed) — **missed by unit tests, caught by Playwright** | Flask-SocketIO 5.7.2; new `tests/test_realtime.py` exercises the /metrics namespace so CI catches it without a browser |
+| Correctness (M, pre-existing) | Cost tests and three app paths mixed local and UTC dates; between 00:00 and 05:00 PKT costs fell outside "today" | budget period, reference forecast and month-to-date cost use UTC like the stored records; tests use UTC |
+| UI race (M) | Settings form re-initialised when a second settings fetch arrived, wiping text the user was typing (intermittent e2e failure) | form re-initialised only when the saved version (`updated_at`) changes |
+| Migration verification | none in CI | `tests/test_schema_upgrade.py` rebuilds the pre-M10 schema, runs the upgrade twice, checks columns, constraints, indexes, back-fill and kept rows (PostgreSQL) |
+| Frontend dependencies | 57 production advisories (2 critical) | `npm audit fix` (semver-compatible only): 29 remaining, 0 critical; runtime axios 1.21.1, socket.io-parser 4.2.7. Lockfile regenerated with npm 10 so CI's `npm ci` accepts it |
+| CI/CD | tag-pinned actions; no e2e, audit or code scanning | `ci.yml`: actions pinned to full commit SHAs, `contents: read`, `persist-credentials: false`, CI-only PostgreSQL services; jobs backend, frontend (CI=true), e2e (Playwright against CI database), dependency audit (fails on any Python advisory except the documented one, and on critical npm advisories). `codeql.yml`: Python + JavaScript, `security-events: write` only on that job |
+| Secrets | full-history scan | current database password never committed; `.env` ignored; `backend/.env.example` with placeholders; `logs/` and root documents ignored. Historical: the old `abdur` database password (S12) remains in published history — rotate it wherever that role exists. `API_KEY=`/`postgres:` strings found in history are examples inside third-party skill documentation. |
+| Repository settings (not changed) | `main` has no branch protection or ruleset; secret scanning and push protection are enabled; Dependabot security updates disabled | Recommended: a ruleset on `main` requiring the CI and CodeQL checks and a pull request; enable Dependabot alerts/updates for pip, npm and GitHub Actions |
