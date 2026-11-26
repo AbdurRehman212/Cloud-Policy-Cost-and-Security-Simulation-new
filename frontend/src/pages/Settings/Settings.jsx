@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { useDispatch, useSelector } from "react-redux";
 import {
   BellIcon,
@@ -74,7 +74,16 @@ const Settings = () => {
   const [formError, setFormError] = useState(null);
 
   useEffect(() => { dispatch(fetchSettings()); }, [dispatch]);
-  useEffect(() => { if (data) setForm(toForm(data)); }, [data]);
+  // Re-initialise the form only when the saved settings change (first load, save, reset). A second
+  // fetch of unchanged settings (Layout also loads them) must not wipe edits the user is typing.
+  const loadedVersion = useRef(null);
+  useEffect(() => {
+    if (!data) return;
+    const version = data.updated_at || "initial";
+    if (loadedVersion.current === version) return;
+    loadedVersion.current = version;
+    setForm(toForm(data));
+  }, [data]);
 
   const set = (section, key, value) => setForm((f) => ({ ...f, [section]: { ...f[section], [key]: value } }));
 
