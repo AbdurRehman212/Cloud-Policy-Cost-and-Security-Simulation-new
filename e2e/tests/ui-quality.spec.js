@@ -6,7 +6,7 @@ const AxeBuilder = require('@axe-core/playwright').default;
 // Set E2E_SHOTS=<dir> to also save a screenshot per page/width for manual visual review.
 const API = process.env.E2E_API_URL || 'http://localhost:5000/api';
 const PASSWORD = 'Str0ng!Pass123';
-const PAGES = ['/', '/resources', '/security', '/governance', '/cost', '/reports', '/organization', '/membership', '/settings', '/profile'];
+const PAGES = ['/', '/resources', '/security', '/governance', '/cost', '/reports', '/organization', '/membership', '/settings', '/profile', '/remediation', '/audit'];
 const WIDTHS = [390, 768, 1024, 1440];
 const BLOCKING = ['critical', 'serious'];
 

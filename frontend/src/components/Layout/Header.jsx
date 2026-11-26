@@ -25,6 +25,8 @@ import { clearResources } from '../../store/slices/resourceSlice';
 import { clearSecurityState } from '../../store/slices/securitySlice';
 import { disconnectAllSockets } from '../../services/api';
 import UserProgressBar from './UserProgressBar';
+import AlertBell from './AlertBell';
+import { clearSettings } from '../../store/slices/settingsSlice';
 
 const ROLE_COLORS = {
   owner: 'bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-300',
@@ -202,6 +204,7 @@ const Header = ({ onMenuClick = () => {} }) => {
 
         <div className="flex items-center gap-2 sm:gap-4 shrink-0">
           <div className="hidden lg:block"><UserProgressBar /></div>
+          <AlertBell />
           <button
             type="button"
             onClick={() => startTour(0)}
@@ -237,7 +240,9 @@ const Header = ({ onMenuClick = () => {} }) => {
                   dispatch(clearSecurityState());
                   dispatch(clearCostState());
                   dispatch(clearOrganizationState());
+                  dispatch(clearSettings());
                 });
+                try { sessionStorage.removeItem('fyp:default-org-applied'); } catch (_e) { /* ignore */ }
               }}
               className="p-2 text-gray-500 hover:text-danger-600 dark:text-gray-400 dark:hover:text-danger-400"
               title="Logout"

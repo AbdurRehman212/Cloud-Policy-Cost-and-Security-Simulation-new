@@ -61,10 +61,12 @@ export const logoutUser = createAsyncThunk(
   'auth/logout',
   async (_, { getState, rejectWithValue }) => {
     try {
-      const refreshToken = getState().auth.refreshToken;
+      const { refreshToken, token } = getState().auth;
       if (refreshToken) {
+        // Revoke both tokens server-side (the access token would otherwise stay valid for up to 1 h).
         await axios.delete(`${API_URL}/auth/logout`, {
           headers: { Authorization: `Bearer ${refreshToken}` },
+          data: { access_token: token },
         });
       }
       return true;

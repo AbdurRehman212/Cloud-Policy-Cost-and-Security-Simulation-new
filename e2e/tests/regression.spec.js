@@ -102,12 +102,13 @@ test('M9 downloads a PDF and a CSV report', async () => {
   expect(csv.suggestedFilename()).toMatch(/\.csv$/i);
 });
 
-test('M6 simulated attack is recorded and labelled as simulated, not as a model score', async () => {
+test('M6 simulated attack is scored by the detector and labelled as simulated', async () => {
   await goto('/security');
   await page.getByRole('button', { name: 'Simulate Attack' }).first().click();
-  await expect(page.getByText(/not a prediction\s+by the machine-learning detector/)).toBeVisible();
+  await expect(page.getByText(/The detector scores the injected traffic/)).toBeVisible();
   await page.getByRole('button', { name: 'Simulate Attack' }).last().click();
-  await expect(page.getByText('Simulated (no model score)').first()).toBeVisible();
+  await expect(page.getByText('simulated', { exact: true }).first()).toBeVisible();
+  await expect(page.getByRole('link', { name: 'Remediate…' }).first()).toBeVisible();
 });
 
 test('no uncaught browser exceptions during the whole journey', async () => {
