@@ -9,6 +9,7 @@ from app import db
 from app.utils.rbac import active_membership
 from app.models.cost import CostRecord, Budget, CostForecast
 from app.models.organization import OrganizationMember
+from app.services.audit_service import record_audit
 
 try:
     from app.ai_models.cost_forecaster import cost_forecaster
@@ -332,6 +333,9 @@ def create_budget():
         return jsonify({'error': error}), 400
     budget = Budget(organization_id=org_id, **fields)
     db.session.add(budget)
+    db.session.flush()
+    record_audit('budget_created', org_id=org_id, user_id=user_id, resource_type='budget', resource_id=budget.id,
+                 new_values=budget.to_dict())
     db.session.commit()
     return jsonify({
         'message': 'Budget created',
@@ -353,6 +357,8 @@ def update_budget(budget_id):
         return jsonify({'error': error}), 400
     for key, val in fields.items():
         setattr(budget, key, val)
+    record_audit('budget_updated', org_id=budget.organization_id, user_id=user_id, resource_type='budget',
+                 resource_id=budget.id, new_values=fields)
     db.session.commit()
     return jsonify({'message': 'Budget updated', 'budget': budget.to_dict()}), 200
 
@@ -365,6 +371,8 @@ def delete_budget(budget_id):
     if not _require_admin(_require_org_membership(user_id, budget.organization_id)):
         return jsonify({'error': 'Insufficient permissions'}), 403
     budget.is_active = False
+    record_audit('budget_deleted', org_id=budget.organization_id, user_id=user_id, resource_type='budget',
+                 resource_id=budget.id, new_values={'is_active': False})
     db.session.commit()
     return jsonify({'message': 'Budget deleted'}), 200
 

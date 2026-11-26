@@ -10,6 +10,7 @@ from app.services.alert_rule_service import (
     validate_rule_payload,
 )
 from app.services.operational_event_service import OperationalEventService
+from app.services.audit_service import record_audit
 from datetime import datetime, timedelta
 
 try:
@@ -433,12 +434,17 @@ def analyze_traffic():
             severity=ThreatSeverity.HIGH if result['confidence'] > 0.8 else ThreatSeverity.MEDIUM,
             confidence_score=result['confidence'],
             affected_resources=data.get('resource_ids', []),
-            attack_vectors={'metrics': current_metrics},
+            attack_vectors={'metrics': current_metrics, 'source_ip': '198.51.100.200'},
             network_traffic_snapshot=current_metrics,
             model_version=(result.get('model_version') or result.get('source') or '')[:20],
             detection_pattern=f'{result.get("threat_type", "suspicious_behavior")} traffic pattern detected',
         )
         db.session.add(threat)
+        db.session.flush()
+        record_audit('threat_detected', org_id=org_id, user_id=user_id, resource_type='threat',
+                     resource_id=threat.id, compliance_relevant=True,
+                     new_values={'threat_type': result['threat_type'], 'confidence': result['confidence'],
+                                 'source': result.get('source')})
         _create_security_log(
             org_id,
             result['threat_type'],
@@ -457,35 +463,12 @@ def analyze_traffic():
         result['triggered_rules'] = triggered_rules
         db.session.commit()
         _emit_security_updates(org_id, {'threat': threat.to_dict(), 'alert_rules_triggered': triggered_rules})
-        # Trigger remediation if auto-remediation enabled
-        if data.get('auto_remediate'):
-            from app.models.resources import VirtualMachine
-            resource = VirtualMachine.query.filter_by(
-                instance_id=data.get('resource_id')
-            ).first()
-            if resource and remediation_agent:
-                remediation_result = remediation_agent.remediate(
-                    {
-                        'type': result['threat_type'],
-                        'severity': 'high',
-                        'confidence': result['confidence']
-                    },
-                    resource.to_dict()
-                )
-                # Create remediation record
-                for action in remediation_result['results']:
-                    rem = RemediationAction(
-                        threat_id=threat.id,
-                        action_type=action['action'],
-                        executed_by='system',
-                        status=action['status'],
-                        details=action['details'],
-                        requires_approval=remediation_result['requires_approval']
-                    )
-                    db.session.add(rem)
-                db.session.commit()
-                result['remediation'] = remediation_result
-                _emit_security_updates(org_id, {'threat': threat.to_dict(), 'remediation': remediation_result})
+        # Remediation is proposed here but never executed implicitly: execution needs an
+        # admin's explicit approval through the Remediation Agent (/api/remediation/execute).
+        if data.get('auto_remediate') and remediation_agent:
+            result['remediation'] = remediation_agent.remediate(
+                {'type': result['threat_type'], 'confidence': result['confidence']}, None)
+            result['remediation']['issue_key'] = f'threat:{threat.id}'
     return jsonify(result), 200
 @security_bp.route('/threats/<int:threat_id>/resolve', methods=['POST'])
 @jwt_required()
@@ -496,9 +479,13 @@ def resolve_threat(threat_id):
     member = _get_org_membership(threat.organization_id, user_id)
     if not _is_security_manager(member):
         return jsonify({'error': 'Insufficient permissions'}), 403
+    old_status = threat.status
     threat.status = 'resolved'
     threat.resolved_at = datetime.utcnow()
     threat.resolved_by = user_id
+    record_audit('threat_resolved', org_id=threat.organization_id, user_id=user_id, resource_type='threat',
+                 resource_id=threat.id, compliance_relevant=True,
+                 old_values={'status': old_status}, new_values={'status': 'resolved', 'method': 'manual'})
     db.session.add(
         SecurityLog(
             organization_id=threat.organization_id,
@@ -556,11 +543,14 @@ def simulate_attack():
         severity=ThreatSeverity.HIGH,
         confidence_score=0.95,
         affected_resources=[target_resource] if target_resource else [],
-        attack_vectors={'scenario': attack_scenario, 'attack_type': attack_type, 'simulation': True},
+        attack_vectors={'scenario': attack_scenario, 'attack_type': attack_type, 'simulation': True,
+                        'source_ip': '198.51.100.201'},
         network_traffic_snapshot={'predictions': predictions[:5]},
         model_version='simulation',
         detection_pattern=f'Simulated {attack_type} scenario',
-        status='contained'  # Auto-contained in simulation
+        # Injected scenarios are open until someone remediates them (Module 10); earlier builds
+        # marked them "contained" although no containment action had run.
+        status='active',
     )
     db.session.add(threat)
     db.session.add(
@@ -582,6 +572,11 @@ def simulate_attack():
         )
     )
     db.session.flush()
+    record_audit('attack_simulated', org_id=org_id, user_id=user_id, resource_type='threat', resource_id=threat.id,
+                 compliance_relevant=True,
+                 new_values={'attack_type': attack_type, 'target_resource': target_resource,
+                             'model_detections': len([p for p in predictions if p.get('is_threat')]),
+                             'data_points': len(attack_scenario)})
     triggered_rules = evaluate_alert_rules_for_threat(threat, acting_user_id=user_id)
     db.session.commit()
 

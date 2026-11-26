@@ -181,6 +181,8 @@ class GovernanceEngine:
             failed = [c for c in checks if not c.is_compliant]
             for check in failed:
                 violations.append({
+                    'check_id': check.id,
+                    'remediation_applied': bool(check.remediation_applied),
                     'policy_id': policy.id,
                     'policy_name': policy.name,
                     'severity': policy.severity,
@@ -252,18 +254,17 @@ class GovernanceEngine:
         new_values: dict | None = None,
         old_values: dict | None = None,
     ) -> None:
-        audit = AuditLog(
-            organization_id=org_id,
+        from app.services.audit_service import record_audit
+        record_audit(
+            action,
+            org_id=org_id,
             user_id=user_id,
-            action=action,
             resource_type=resource_type,
             resource_id=resource_id,
-            timestamp=datetime.utcnow(),
-            old_values=old_values,
             new_values=new_values or {},
+            old_values=old_values,
             compliance_relevant=True,
         )
-        db.session.add(audit)
 
 
 governance_engine = GovernanceEngine()

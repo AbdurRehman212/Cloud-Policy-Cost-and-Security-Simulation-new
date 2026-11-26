@@ -16,7 +16,6 @@ from sqlalchemy import func
 from app import db, socketio
 from app.ai_models.data_generator import SyntheticDataGenerator
 from app.services.des_engine import VMDESSimulator
-from app.ai_models.remediation_agent import remediation_agent
 from app.ai_models.threat_detector import threat_detector
 from app.models.cost import CostRecord
 from app.models.governance import AuditLog
@@ -757,23 +756,14 @@ class ResourceSimulator:
             )
         )
 
-        if remediation_agent is not None:
-            remediation_result = remediation_agent.remediate(
-                {'type': result.get('threat_type'), 'severity': severity.value, 'confidence': result.get('confidence', 0.0)},
-                vm.to_dict(),
-            )
-            for action in remediation_result.get('results', []):
-                db.session.add(
-                    RemediationAction(
-                        threat_id=threat.id,
-                        action_type=action.get('action', 'request_review'),
-                        executed_by='system',
-                        status=action.get('status', 'success'),
-                        details=action.get('details'),
-                        result='Applied by dataset-backed simulator',
-                        requires_approval=remediation_result.get('requires_approval', False),
-                    )
-                )
+        # Remediation is not applied automatically: the threat stays "active" until an admin
+        # approves and executes a remediation (Module 10). Earlier builds stored "success"
+        # RemediationAction rows here although nothing had been changed.
+        from app.services.audit_service import record_audit
+        record_audit('threat_detected', org_id=vm.organization_id, user_id=None, resource_type='threat',
+                     resource_id=threat.id, compliance_relevant=True,
+                     new_values={'threat_type': result.get('threat_type'), 'source': result.get('source'),
+                                 'confidence': result.get('confidence'), 'resource': vm.instance_id})
 
         socketio.emit(
             'threats:update',

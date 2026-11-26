@@ -186,19 +186,19 @@ class OperationalEventService:
         """Record a persistent operational event."""
         event_config = OPERATIONAL_EVENTS.get(event_type, {})
 
+        from app.services.audit_service import record_audit
+        if resource_type is None:
+            resource_type = event_type.split('_')[0] if '_' in event_type else event_type
         try:
-            audit = AuditLog(
-                organization_id=org_id,
+            audit = record_audit(
+                event_type,
+                org_id=org_id,
                 user_id=user_id,
-                action=event_type,
-                resource_type=resource_type or event_type.split('_')[0] if '_' in event_type else event_type,
+                resource_type=resource_type,
                 resource_id=resource_id,
-                timestamp=datetime.utcnow(),
                 new_values=details or {},
+                commit=True,
             )
-            db.session.add(audit)
-            db.session.commit()
-
             return audit.id
         except Exception as e:
             db.session.rollback()

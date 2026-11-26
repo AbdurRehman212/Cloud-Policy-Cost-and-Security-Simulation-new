@@ -5,6 +5,7 @@ from app.models.organization import Organization, OrganizationMember, Invitation
 from app.models.user import User
 from app.utils.rbac import require_org_role
 from datetime import datetime
+from app.services.audit_service import record_audit
 org_bp = Blueprint('organization', __name__)
 
 
@@ -70,6 +71,8 @@ def create_organization():
                           cidr_block='10.0.1.0/24', subnet_type='public', availability_zone='us-east-1a'))
     db.session.add(Subnet(name='private-subnet-1', vpc_id=vpc.id, organization_id=org.id,
                           cidr_block='10.0.2.0/24', subnet_type='private', availability_zone='us-east-1b'))
+    record_audit('org_created', org_id=org.id, user_id=user_id, resource_type='organization', resource_id=org.id,
+                 new_values={'name': org.name})
     db.session.commit()
     return _success({
         'message': 'Organization created',
@@ -155,6 +158,9 @@ def invite_member(org_id):
     # Create invitation
     invitation = Invitation.create_invitation(org_id, email, role, user_id)
     db.session.add(invitation)
+    db.session.flush()
+    record_audit('member_invited', org_id=org_id, user_id=user_id, resource_type='invitation',
+                 resource_id=invitation.id, new_values={'email': email, 'role': role})
     db.session.commit()
     # Send invitation email
     from flask_mail import Message
@@ -208,6 +214,8 @@ def accept_invitation():
     )
     invitation.accepted = True
     db.session.add(member)
+    record_audit('member_joined', org_id=invitation.organization_id, user_id=member.user_id,
+                 resource_type='membership', resource_id=invitation.id, new_values={'role': member.role})
     db.session.commit()
     return _success({
         'message': 'Joined organization successfully',
@@ -230,6 +238,8 @@ def remove_member(org_id, member_id):
     if target_member.role == 'admin' and get_user_role_in_org(int(get_jwt_identity()), org_id) != 'owner':
         return _error('Only owners can remove admins', status_code=403)
     db.session.delete(target_member)
+    record_audit('member_removed', org_id=org_id, user_id=int(get_jwt_identity()), resource_type='membership',
+                 resource_id=target_member.user_id, old_values={'role': target_member.role})
     db.session.commit()
     return _success({'message': 'Member removed'})
 
@@ -277,6 +287,8 @@ def update_member_role(org_id, target_user_id):
     if not _may_assign(current.role, target.role, new_role):
         return _error('Only owners can grant or change the admin role', status_code=403)
     target.role = new_role
+    record_audit('member_role_changed', org_id=org_id, user_id=int(get_jwt_identity()), resource_type='membership',
+                 resource_id=target_user_id, new_values={'role': new_role})
     db.session.commit()
     return _success({'message': 'Role updated', 'role': new_role})
 
@@ -327,6 +339,8 @@ def delete_organization(org_id):
     if not member or member.role != 'owner':
         return _error('Only owners can delete organizations', status_code=403)
     org.is_active = False
+    record_audit('org_deleted', org_id=org_id, user_id=user_id, resource_type='organization', resource_id=org_id,
+                 new_values={'is_active': False})
     db.session.commit()
     return _success({'message': 'Organization deleted'})
 
@@ -347,6 +361,8 @@ def update_organization(org_id):
         org.name = data['name']
     if 'description' in data:
         org.description = data['description']
+    record_audit('org_updated', org_id=org_id, user_id=user_id, resource_type='organization', resource_id=org_id,
+                 new_values={k: data[k] for k in ('name', 'description', 'billing_email') if k in data})
     db.session.commit()
     return _success({'message': 'Organization updated', 'organization': org.to_dict()})
 

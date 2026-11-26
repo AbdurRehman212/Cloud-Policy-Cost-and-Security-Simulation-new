@@ -391,6 +391,32 @@ def _pdf_response(buffer, name):
     )
 
 
+_REPORT_ENDPOINTS = {
+    'summary_pdf': ('summary', 'pdf'), 'cost_pdf': ('cost', 'pdf'), 'security_pdf': ('security', 'pdf'),
+    'governance_pdf': ('governance', 'pdf'), 'cost_csv': ('cost', 'csv'), 'security_csv': ('security', 'csv'),
+    'governance_csv': ('governance', 'csv'), 'generate_report': (None, 'pdf'), 'export_csv': (None, 'csv'),
+}
+
+
+@reports_bp.after_request
+def _audit_report(response):
+    """One audit row per successfully generated report or export (Module 11)."""
+    endpoint = (request.endpoint or '').split('.')[-1]
+    if endpoint in _REPORT_ENDPOINTS and response.status_code == 200:
+        from app.services.audit_service import record_audit_safely
+        payload = request.get_json(silent=True) if request.method == 'POST' else None
+        report_type, fmt = _REPORT_ENDPOINTS[endpoint]
+        report_type = report_type or (payload or {}).get('report_type') or request.args.get('type') or 'summary'
+        record_audit_safely(
+            'report_generated', org_id=_resolve_org_id_from_request(payload), user_id=get_jwt_identity(),
+            resource_type='report', resource_id=report_type,
+            new_values={'report_type': report_type, 'format': fmt,
+                        'start_date': request.args.get('start_date') or (payload or {}).get('start_date'),
+                        'end_date': request.args.get('end_date') or (payload or {}).get('end_date')},
+        )
+    return response
+
+
 @reports_bp.route('/summary.pdf', methods=['GET'])
 @jwt_required()
 def summary_pdf():
