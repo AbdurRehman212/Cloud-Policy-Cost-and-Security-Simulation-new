@@ -13,6 +13,8 @@ import {
   Cog6ToothIcon,
   UserCircleIcon,
   BuildingOfficeIcon,
+  WrenchScrewdriverIcon,
+  ClockIcon,
 } from "@heroicons/react/24/outline";
 const Sidebar = ({ open = false, onClose = () => {} }) => {
   const { currentOrganization } = useSelector((state) => state.organization);
@@ -28,6 +30,8 @@ const Sidebar = ({ open = false, onClose = () => {} }) => {
       icon: ClipboardDocumentCheckIcon,
     },
     { name: "Reports", href: "/reports", icon: DocumentChartBarIcon },
+    { name: "Remediation", href: "/remediation", icon: WrenchScrewdriverIcon },
+    { name: "Audit Trail", href: "/audit", icon: ClockIcon },
     { name: "Membership", href: "/membership", icon: CreditCardIcon },
     { name: "Organization", href: "/organization", icon: BuildingOfficeIcon },
     { name: "Settings", href: "/settings", icon: Cog6ToothIcon },

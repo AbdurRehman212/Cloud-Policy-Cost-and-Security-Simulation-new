@@ -79,9 +79,10 @@ def reset_system():
 
         return jsonify({'status': 'success', 'message': 'System safely reset to 1 VM.'}), 200
 
-    except Exception as e:
+    except Exception:
         db.session.rollback()
-        return jsonify({'status': 'error', 'error': {'message': str(e)}}), 500
+        current_app.logger.exception('system reset failed')
+        return jsonify({'status': 'error', 'error': {'message': 'System reset failed.'}}), 500
 
 @admin_bp.route('/analytics/organization/<int:org_id>', methods=['GET'])
 @jwt_required()
@@ -93,6 +94,7 @@ def get_org_analytics(org_id):
 
     # Only accessible by organization admins/owners
     from flask_jwt_extended import get_jwt_identity
+    from app.utils.identity import get_jwt_identity  # int identity; tokens carry it as a string
     user_id = get_jwt_identity()
     member = OrganizationMember.query.filter_by(organization_id=org_id, user_id=user_id).first()
     if not member or member.role not in ['admin', 'owner']:

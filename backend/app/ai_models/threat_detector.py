@@ -89,9 +89,23 @@ class ThreatDetector:
         self._train_if_possible()
 
     def _training_frame(self) -> pd.DataFrame:
+        """CICIDS2017 subset plus labelled synthetic simulator telemetry (training seed only).
+
+        The simulator rows close the domain gap documented in ML_EVIDENCE.md: without them the
+        model never saw the simulator's scales. Evaluation seeds are disjoint (see
+        scripts/evaluate_threat_detector.py)."""
         frame = dataset_catalog.load_security_frame()
         if frame.empty or 'label' not in frame.columns:
             return pd.DataFrame()
+        frame = frame.copy()
+        frame['source'] = 'cicids2017'
+        try:
+            from app.ai_models.simulator_dataset import TRAIN_SEED, simulator_frame
+            sim = simulator_frame(TRAIN_SEED)
+            sim['source'] = 'simulator_synthetic'
+            frame = pd.concat([frame, sim], ignore_index=True, sort=False)
+        except Exception as exc:  # pragma: no cover - keep CICIDS-only training if generation fails
+            logger.warning('[threat_detector] simulator-domain rows unavailable: %s', exc)
         for column in self.feature_columns:
             if column not in frame.columns:
                 frame[column] = 0.0
@@ -123,7 +137,7 @@ class ThreatDetector:
             )
             self.model.fit(X, y)
             logger.info(
-                '[threat_detector] Trained RandomForest on %d rows (13 features, 4 classes)',
+                '[threat_detector] Trained RandomForest on %d rows (10 features, 4 classes)',
                 len(frame),
             )
             return True
@@ -131,7 +145,7 @@ class ThreatDetector:
         self.backend = 'centroid'
         self.model = _CentroidClassifier().fit(X.to_numpy(), y.to_numpy())
         logger.info(
-            '[threat_detector] Trained centroid classifier on %d rows (13 features, 4 classes)',
+            '[threat_detector] Trained centroid classifier on %d rows (10 features, 4 classes)',
             len(frame),
         )
         return True
@@ -150,7 +164,10 @@ class ThreatDetector:
             'features': list(self.feature_columns),
             'training_rows': int(len(frame)),
             'class_counts': {THREAT_LABELS[int(k)]: int(v) for k, v in frame['label'].value_counts().sort_index().items()},
-            'dataset': 'CICIDS2017 subset (backend/data/cicids_subset.csv)',
+            'rows_by_source': ({str(k): int(v) for k, v in frame['source'].value_counts().items()}
+                               if 'source' in frame.columns else {'cicids2017': int(len(frame))}),
+            'dataset': 'CICIDS2017 subset (backend/data/cicids_subset.csv) + synthetic simulator telemetry '
+                       '(app/ai_models/simulator_dataset.py, training seed only)',
             'sklearn_version': sklearn.__version__,
             'trained_at': datetime.utcnow().isoformat(),
             'evaluation': 'backend/scripts/evaluate_threat_detector.py (see docs/ML_EVIDENCE.md)',

@@ -43,10 +43,10 @@ def _org(name, owner):
 
 @pytest.fixture()
 def world(app):
-    """Two organizations; org A has owner/admin/viewer, org B has its own owner."""
-    owner, admin, viewer, other = (_user(f'{n}@t.io') for n in ('owner', 'admin', 'viewer', 'other'))
+    """Two organizations; org A has owner/admin/member/viewer, org B has its own owner."""
+    owner, admin, viewer, other, member = (_user(f'{n}@t.io') for n in ('owner', 'admin', 'viewer', 'other', 'member'))
     org_a, org_b = _org('OrgA', owner), _org('OrgB', other)
-    for user, role in ((owner, 'owner'), (admin, 'admin'), (viewer, 'viewer')):
+    for user, role in ((owner, 'owner'), (admin, 'admin'), (viewer, 'viewer'), (member, 'member')):
         db.session.add(OrganizationMember(organization_id=org_a.id, user_id=user.id, role=role))
     db.session.add(OrganizationMember(organization_id=org_b.id, user_id=other.id, role='owner'))
     db.session.commit()
@@ -57,8 +57,8 @@ def world(app):
     return {
         'org_a': org_a.id, 'org_b': org_b.id,
         'owner': headers(owner), 'admin': headers(admin),
-        'viewer': headers(viewer), 'other': headers(other),
-        'owner_id': owner.id,
+        'viewer': headers(viewer), 'other': headers(other), 'member': headers(member),
+        'owner_id': owner.id, 'admin_id': admin.id, 'member_id': member.id, 'other_id': other.id,
     }
 
 

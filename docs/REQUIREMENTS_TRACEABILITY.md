@@ -1,5 +1,7 @@
 # Requirements Traceability — Modules 7–9
 
+Modules 10–12 (Remediation Agent, Audit Trail, User Settings) are traced in `PRD_MODULES_10_TO_12.md`, section 2.
+
 Status after implementation. VERIFIED = covered by a passing automated test (23 backend tests, `pytest`) and the frontend production build compiled. UI behaviour was not exercised in a browser against PostgreSQL.
 
 | ID | Requirement (explaination.docx) | Code | Before | Now | Test Case ID → test |

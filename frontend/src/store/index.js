@@ -5,6 +5,7 @@ import resourceReducer from './slices/resourceSlice';
 import securityReducer from './slices/securitySlice';
 import costReducer from './slices/costSlice';
 import dashboardReducer from './slices/dashboardSlice';
+import settingsReducer from './slices/settingsSlice';
 export const store = configureStore({
   reducer: {
     auth: authReducer,
@@ -13,6 +14,7 @@ export const store = configureStore({
     security: securityReducer,
     cost: costReducer,
     dashboard: dashboardReducer,
+    settings: settingsReducer,
   },
   middleware: (getDefaultMiddleware) =>
     getDefaultMiddleware({

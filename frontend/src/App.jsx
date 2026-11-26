@@ -23,6 +23,8 @@ import ResetPassword from "./pages/Auth/ResetPassword";
 import VerifyEmail from "./pages/Auth/VerifyEmail";
 import AcceptInvite from "./pages/Auth/AcceptInvite";
 import Reports from "./pages/Reports/Reports";
+import Remediation from "./pages/Remediation/Remediation";
+import AuditTrail from "./pages/Audit/AuditTrail";
 
 // Error boundary for dashboard resilience
 class DashboardErrorBoundary extends React.Component {
@@ -109,6 +111,8 @@ function App() {
           <Route path="organization" element={<Organization />} />
           <Route path="network" element={<NetworkTopology />} />
           <Route path="reports" element={<Reports />} />
+          <Route path="remediation" element={<Remediation />} />
+          <Route path="audit" element={<AuditTrail />} />
         </Route>
       </Routes>
     </>

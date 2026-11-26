@@ -100,29 +100,54 @@ class ThreatDetection(db.Model):
             'detection_pattern': self.detection_pattern,
         }
 class RemediationAction(db.Model):
-    """Automated remediation actions."""
+    """A remediation proposed for, or executed against, a threat or governance issue (Table 5.22).
+
+    Rows created before Module 10 was completed (by the old auto-remediate flag on /analyze)
+    have ``organization_id`` back-filled from their threat and ``details`` stored as plain text;
+    they were never executed against a resource, so ``verified`` is False for them.
+    """
     __tablename__ = 'remediation_actions'
     id = db.Column(db.Integer, primary_key=True)
-    threat_id = db.Column(db.Integer, db.ForeignKey('threat_detections.id'), nullable=False)
+    organization_id = db.Column(db.Integer, db.ForeignKey('organizations.id'), index=True)
+    threat_id = db.Column(db.Integer, db.ForeignKey('threat_detections.id'), nullable=True)
+    issue_type = db.Column(db.String(20))  # threat | violation | idle
+    issue_key = db.Column(db.String(100), index=True)  # e.g. threat:12, violation:340, idle:vm:7
+    resource_type = db.Column(db.String(20))  # vm | database | organization
+    resource_id = db.Column(db.Integer)
+    assigned_to = db.Column(db.Integer, db.ForeignKey('users.id'))
     action_type = db.Column(db.String(100), nullable=False)  # block_ip, isolate_resource, scale_up, etc.
     executed_at = db.Column(db.DateTime, default=datetime.utcnow)
-    executed_by = db.Column(db.String(50))  # 'system' or user_id
-    status = db.Column(db.String(20), default='pending')  # pending, success, failed
-    details = db.Column(db.JSON)  # Action parameters
+    executed_by = db.Column(db.String(50))  # 'system' (legacy) or user id
+    status = db.Column(db.String(20), default='pending')  # pending, in_progress, succeeded, failed, awaiting_review
+    details = db.Column(db.JSON)  # Action parameters, before/after state, explanation
     result = db.Column(db.Text)  # Outcome description
     requires_approval = db.Column(db.Boolean, default=False)
     approved_by = db.Column(db.Integer, db.ForeignKey('users.id'))
     approved_at = db.Column(db.DateTime)
     threat = db.relationship('ThreatDetection', backref='remediations')
+
     def to_dict(self):
+        details = self.details if isinstance(self.details, dict) else {'note': self.details}
         return {
             'id': self.id,
+            'organization_id': self.organization_id,
+            'threat_id': self.threat_id,
+            'issue_type': self.issue_type or ('threat' if self.threat_id else None),
+            'issue_key': self.issue_key or (f'threat:{self.threat_id}' if self.threat_id else None),
+            'resource_type': self.resource_type,
+            'resource_id': self.resource_id,
+            'assigned_to': self.assigned_to,
             'action_type': self.action_type,
             'executed_at': self.executed_at.isoformat() if self.executed_at else None,
+            'executed_by': self.executed_by,
             'status': self.status,
-            'details': self.details,
+            'details': details,
             'result': self.result,
-            'requires_approval': self.requires_approval
+            'requires_approval': self.requires_approval,
+            'approved_by': self.approved_by,
+            'approved_at': self.approved_at.isoformat() if self.approved_at else None,
+            'verified': bool(details.get('verified')) if isinstance(details, dict) else False,
+            'legacy': self.issue_key is None,
         }
 
 

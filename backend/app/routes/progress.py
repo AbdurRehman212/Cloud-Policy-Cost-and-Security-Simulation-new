@@ -1,6 +1,7 @@
 from datetime import datetime
 from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required, get_jwt_identity
+from app.utils.identity import get_jwt_identity  # int identity; tokens carry it as a string
 from app import db
 from app.models.progress import UserProgress
 from app.models.organization import OrganizationMember, ensure_default_organization_membership

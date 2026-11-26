@@ -16,7 +16,6 @@ from sqlalchemy import func
 from app import db, socketio
 from app.ai_models.data_generator import SyntheticDataGenerator
 from app.services.des_engine import VMDESSimulator
-from app.ai_models.remediation_agent import remediation_agent
 from app.ai_models.threat_detector import threat_detector
 from app.models.cost import CostRecord
 from app.models.governance import AuditLog
@@ -650,30 +649,8 @@ class ResourceSimulator:
         record.timestamp = moment
 
     def _build_vm_traffic_metrics(self, vm):
-        cpu = float(vm.cpu_utilization or 0)
-        memory = float(vm.memory_utilization or 0)
-        network_in = float(vm.network_in_mbps or 0)
-        network_out = float(vm.network_out_mbps or 0)
-        requests_per_minute = int(max(120, network_in * 14 + cpu * 24 + self._rng.uniform(0, 100)))
-        avg_latency_ms = round(max(15.0, 30 + cpu * 1.8 + network_out * 0.3 + self._rng.uniform(-4, 18)), 2)
-        error_rate = round(min(0.35, max(0.002, (cpu / 100.0) * 0.05 + self._rng.uniform(0.0, 0.01))), 4)
-        auth_failures = int(max(0, (cpu - 70) / 5 + self._rng.uniform(0, 4))) if cpu > 70 else int(self._rng.uniform(0, 2))
-
-        return {
-            'requests_per_minute': requests_per_minute,
-            'avg_latency_ms': avg_latency_ms,
-            'error_rate': error_rate,
-            'bytes_in': int(network_in * 125000),
-            'bytes_out': int(network_out * 125000),
-            'active_connections': int(max(1, network_in / 2 + cpu * 0.8)),
-            'cpu_utilization': cpu,
-            'memory_utilization': memory,
-            'disk_read_iops': float(vm.disk_read_iops or 0),
-            'disk_write_iops': float(vm.disk_write_iops or 0),
-            'network_in_mbps': network_in,
-            'network_out_mbps': network_out,
-            'auth_failures': auth_failures,
-        }
+        from app.ai_models.simulator_dataset import vm_traffic_metrics
+        return vm_traffic_metrics(vm, self._rng)
 
     def _map_threat_type(self, label):
         normalized = (label or '').lower()
@@ -757,23 +734,14 @@ class ResourceSimulator:
             )
         )
 
-        if remediation_agent is not None:
-            remediation_result = remediation_agent.remediate(
-                {'type': result.get('threat_type'), 'severity': severity.value, 'confidence': result.get('confidence', 0.0)},
-                vm.to_dict(),
-            )
-            for action in remediation_result.get('results', []):
-                db.session.add(
-                    RemediationAction(
-                        threat_id=threat.id,
-                        action_type=action.get('action', 'request_review'),
-                        executed_by='system',
-                        status=action.get('status', 'success'),
-                        details=action.get('details'),
-                        result='Applied by dataset-backed simulator',
-                        requires_approval=remediation_result.get('requires_approval', False),
-                    )
-                )
+        # Remediation is not applied automatically: the threat stays "active" until an admin
+        # approves and executes a remediation (Module 10). Earlier builds stored "success"
+        # RemediationAction rows here although nothing had been changed.
+        from app.services.audit_service import record_audit
+        record_audit('threat_detected', org_id=vm.organization_id, user_id=None, resource_type='threat',
+                     resource_id=threat.id, compliance_relevant=True,
+                     new_values={'threat_type': result.get('threat_type'), 'source': result.get('source'),
+                                 'confidence': result.get('confidence'), 'resource': vm.instance_id})
 
         socketio.emit(
             'threats:update',

@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { useDispatch, useSelector } from "react-redux";
 import {
   BellIcon,
@@ -9,637 +9,276 @@ import {
 } from "@heroicons/react/24/outline";
 import toast from "react-hot-toast";
 
-import apiClient from "../../services/api";
-import { updateProfile } from "../../store/slices/authSlice";
+import { fetchProfile } from "../../store/slices/authSlice";
+import { fetchSettings, resetSettings, saveSettings } from "../../store/slices/settingsSlice";
+import { formatDateTime } from "../../utils/format";
 
-const DEFAULT_WIDGET_ORDER = ["resources", "security", "costs", "governance", "activity"];
-
-const SETTINGS_TABS = [
+const TABS = [
   { id: "profile", name: "Profile", icon: UserCircleIcon },
-  { id: "dashboard", name: "Dashboard", icon: RectangleGroupIcon },
   { id: "appearance", name: "Appearance", icon: SwatchIcon },
-  { id: "notifications", name: "Notifications", icon: BellIcon },
+  { id: "dashboard", name: "Dashboard", icon: RectangleGroupIcon },
+  { id: "alerts", name: "Alerts", icon: BellIcon },
   { id: "security", name: "Security", icon: ShieldCheckIcon },
 ];
 
-const WIDGET_LABELS = {
-  resources: "Resources",
-  security: "Security",
-  costs: "Costs",
-  governance: "Governance",
-  activity: "Recent Activity",
-};
+const DATE_FORMAT_EXAMPLES = { "YYYY-MM-DD": "2026-11-26", "DD/MM/YYYY": "26/11/2026", "MM/DD/YYYY": "11/26/2026" };
+
+const Field = ({ label, hint, children, htmlFor }) => (
+  <div>
+    <label htmlFor={htmlFor} className="block text-sm font-medium text-gray-700 dark:text-gray-300">{label}</label>
+    <div className="mt-1">{children}</div>
+    {hint && <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">{hint}</p>}
+  </div>
+);
+
+const Toggle = ({ id, label, description, checked, onChange }) => (
+  <label htmlFor={id} className="flex items-start justify-between gap-4 rounded-lg border border-gray-200 p-3 dark:border-gray-700">
+    <span>
+      <span className="block text-sm font-medium text-gray-900 dark:text-white">{label}</span>
+      {description && <span className="block text-xs text-gray-500 dark:text-gray-400">{description}</span>}
+    </span>
+    <input id={id} type="checkbox" className="mt-1 h-4 w-4 rounded border-gray-300 text-primary-600" checked={checked} onChange={(e) => onChange(e.target.checked)} />
+  </label>
+);
+
+/** Build the editable form from the API representation. */
+const toForm = (data) => ({
+  profile: {
+    first_name: data.profile.first_name || "",
+    last_name: data.profile.last_name || "",
+    department: data.profile.department || "",
+    job_title: data.profile.job_title || "",
+    phone: data.profile.phone || "",
+  },
+  appearance: { theme: data.appearance.theme, date_format: data.appearance.date_format, timezone: data.appearance.timezone },
+  dashboard: {
+    default_view: data.dashboard.default_view === "list" ? "list" : "grid",
+    default_organization_id: data.dashboard.default_organization_id ?? "",
+  },
+  alerts: {
+    security_alerts: data.notifications.preferences.security_alerts,
+    security_severity: data.notifications.preferences.security_severity,
+    cost_alerts: data.notifications.preferences.cost_alerts,
+    cost_threshold: String(data.notifications.preferences.cost_threshold),
+    compliance_alerts: data.notifications.preferences.compliance_alerts,
+  },
+  security: { session_timeout: String(data.security.session_timeout) },
+});
 
 const Settings = () => {
   const dispatch = useDispatch();
-  const { user } = useSelector((state) => state.auth);
-
-  const [settings, setSettings] = useState(null);
-  const [profileForm, setProfileForm] = useState({
-    first_name: "",
-    last_name: "",
-  });
+  const { data, loading, saving, error } = useSelector((state) => state.settings);
+  const { organizations } = useSelector((state) => state.organization);
   const [activeTab, setActiveTab] = useState("profile");
-  const [loading, setLoading] = useState(true);
-  const [savingKey, setSavingKey] = useState(null);
-  const [error, setError] = useState(null);
+  const [form, setForm] = useState(null);
+  const [formError, setFormError] = useState(null);
 
+  useEffect(() => { dispatch(fetchSettings()); }, [dispatch]);
+  // Re-initialise the form only when the saved settings change (first load, save, reset). A second
+  // fetch of unchanged settings (Layout also loads them) must not wipe edits the user is typing.
+  const loadedVersion = useRef(null);
   useEffect(() => {
-    const loadSettings = async () => {
-      setLoading(true);
-      setError(null);
-      try {
-        const response = await apiClient.get("/settings/");
-        const payload = response?.data?.data;
-        setSettings(payload);
-        setProfileForm({
-          first_name: payload?.user?.first_name || user?.first_name || "",
-          last_name: payload?.user?.last_name || user?.last_name || "",
-        });
-      } catch (loadError) {
-        setError(
-          loadError?.response?.data?.error?.message ||
-            "Unable to load your saved settings.",
-        );
-      } finally {
-        setLoading(false);
-      }
-    };
+    if (!data) return;
+    const version = data.updated_at || "initial";
+    if (loadedVersion.current === version) return;
+    loadedVersion.current = version;
+    setForm(toForm(data));
+  }, [data]);
 
-    loadSettings();
-  }, [user?.first_name, user?.last_name]);
+  const set = (section, key, value) => setForm((f) => ({ ...f, [section]: { ...f[section], [key]: value } }));
 
-  useEffect(() => {
-    const theme = settings?.appearance?.theme;
-    if (!theme) {
-      return;
+  const payloadFor = (tab) => {
+    if (tab === "profile") return { profile: form.profile };
+    if (tab === "appearance") return { appearance: form.appearance };
+    if (tab === "dashboard") {
+      return {
+        dashboard: {
+          default_view: form.dashboard.default_view,
+          default_organization_id: form.dashboard.default_organization_id === "" ? null : Number(form.dashboard.default_organization_id),
+        },
+      };
     }
-
-    document.documentElement.classList.toggle("dark", theme === "dark");
-  }, [settings?.appearance?.theme]);
-
-  const updateSettingsState = (updater) => {
-    setSettings((current) => (typeof updater === "function" ? updater(current) : updater));
+    if (tab === "alerts") {
+      return {
+        notifications: {
+          preferences: {
+            security_alerts: form.alerts.security_alerts,
+            security_severity: form.alerts.security_severity,
+            cost_alerts: form.alerts.cost_alerts,
+            // Sent as typed so the server can reject non-numeric input (UT-70).
+            cost_threshold: form.alerts.cost_threshold.trim() === "" ? "" : Number.isNaN(Number(form.alerts.cost_threshold)) ? form.alerts.cost_threshold : Number(form.alerts.cost_threshold),
+            compliance_alerts: form.alerts.compliance_alerts,
+          },
+        },
+      };
+    }
+    return { security: { session_timeout: Number(form.security.session_timeout) } };
   };
 
-  const saveSettingsSection = async (sectionKey, payload) => {
-    setSavingKey(sectionKey);
-    try {
-      const response = await apiClient.put("/settings/", payload);
-      setSettings(response?.data?.data);
+  const save = async (event) => {
+    event.preventDefault();
+    setFormError(null);
+    const result = await dispatch(saveSettings(payloadFor(activeTab)));
+    if (saveSettings.fulfilled.match(result)) {
       toast.success("Settings saved");
-    } catch (saveError) {
-      toast.error(
-        saveError?.response?.data?.error?.message || "Unable to save settings",
-      );
-    } finally {
-      setSavingKey(null);
+      if (activeTab === "profile") dispatch(fetchProfile());
+    } else {
+      setFormError(result.payload);
+      toast.error(result.payload || "Settings were not saved");
     }
   };
 
-  const moveWidget = (widgetKey, direction) => {
-    updateSettingsState((current) => {
-      const currentOrder =
-        current?.dashboard?.dashboard_layout?.widget_order?.length > 0
-          ? [...current.dashboard.dashboard_layout.widget_order]
-          : [...DEFAULT_WIDGET_ORDER];
-      const index = currentOrder.indexOf(widgetKey);
-      if (index === -1) {
-        return current;
-      }
-
-      const targetIndex = direction === "up" ? index - 1 : index + 1;
-      if (targetIndex < 0 || targetIndex >= currentOrder.length) {
-        return current;
-      }
-
-      [currentOrder[index], currentOrder[targetIndex]] = [
-        currentOrder[targetIndex],
-        currentOrder[index],
-      ];
-
-      return {
-        ...current,
-        dashboard: {
-          ...current.dashboard,
-          dashboard_layout: {
-            ...current.dashboard.dashboard_layout,
-            widget_order: currentOrder,
-          },
-        },
-      };
-    });
+  const restore = async () => {
+    setFormError(null);
+    const result = await dispatch(resetSettings());
+    if (resetSettings.fulfilled.match(result)) toast.success("Default settings restored");
+    else toast.error(result.payload || "Defaults could not be restored");
   };
 
-  const toggleHiddenWidget = (widgetKey) => {
-    updateSettingsState((current) => {
-      const hiddenWidgets = new Set(
-        current?.dashboard?.dashboard_layout?.hidden_widgets || [],
-      );
-      if (hiddenWidgets.has(widgetKey)) {
-        hiddenWidgets.delete(widgetKey);
-      } else {
-        hiddenWidgets.add(widgetKey);
-      }
-
-      return {
-        ...current,
-        dashboard: {
-          ...current.dashboard,
-          dashboard_layout: {
-            ...current.dashboard.dashboard_layout,
-            hidden_widgets: Array.from(hiddenWidgets),
-          },
-        },
-      };
-    });
-  };
-
-  const handleProfileSave = async () => {
-    setSavingKey("profile");
-    try {
-      const result = await dispatch(updateProfile(profileForm));
-      if (result.meta.requestStatus !== "fulfilled") {
-        throw new Error(result.payload || result.error?.message || "Unable to update profile");
-      }
-      setSettings((current) => ({
-        ...current,
-        user: result.payload?.user || current?.user,
-      }));
-      toast.success("Profile updated");
-    } catch (profileError) {
-      toast.error(profileError.message || "Unable to update profile");
-    } finally {
-      setSavingKey(null);
-    }
-  };
-
-  if (loading) {
-    return <div className="p-6 text-gray-600 dark:text-gray-300">Loading settings...</div>;
+  if (loading && !data) {
+    return <p className="p-6 text-sm text-gray-500 dark:text-gray-400">Loading your settings…</p>;
   }
-
-  if (error || !settings) {
+  if (error && !data) {
     return (
-      <div className="rounded-lg border border-danger-100 bg-danger-50 px-4 py-3 text-sm text-danger-700 dark:border-danger-800 dark:bg-danger-900/20 dark:text-danger-100">
-        {error || "Unable to load settings."}
+      <div className="card p-6" role="alert">
+        <p className="text-sm text-red-600 dark:text-red-400">{error}</p>
+        <button type="button" className="btn-secondary mt-3" onClick={() => dispatch(fetchSettings())}>Try again</button>
       </div>
     );
   }
-
-  const widgetOrder =
-    settings.dashboard?.dashboard_layout?.widget_order?.length > 0
-      ? settings.dashboard.dashboard_layout.widget_order
-      : DEFAULT_WIDGET_ORDER;
-  const hiddenWidgets = new Set(settings.dashboard?.dashboard_layout?.hidden_widgets || []);
+  if (!form) return null;
 
   return (
-    <div className="space-y-6">
-      <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Settings</h1>
-      <div className="flex flex-col gap-6 lg:flex-row">
-        <div className="space-y-1 lg:w-64">
-          {SETTINGS_TABS.map((tab) => (
-            <button
-              key={tab.id}
-              onClick={() => setActiveTab(tab.id)}
-              className={`flex w-full items-center rounded-lg px-4 py-3 text-left transition-colors ${
-                activeTab === tab.id
-                  ? "bg-primary-50 text-primary-600 dark:bg-primary-900/20 dark:text-primary-400"
-                  : "text-gray-600 hover:bg-gray-50 dark:text-gray-400 dark:hover:bg-gray-800"
-              }`}
-            >
-              <tab.icon className="mr-3 h-5 w-5" />
-              {tab.name}
-            </button>
-          ))}
+    <div className="mx-auto max-w-5xl space-y-6">
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Settings</h1>
+          <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
+            Saved to your account and applied every time you sign in.
+            {data.updated_at && ` Last saved ${formatDateTime(data.updated_at, data.appearance.date_format)}.`}
+          </p>
         </div>
+        <button type="button" className="btn-secondary" onClick={restore} disabled={saving} data-tour="settings-reset">
+          Restore defaults
+        </button>
+      </div>
 
-        <div className="flex-1">
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-4">
+        <nav className="card p-2 lg:col-span-1" aria-label="Settings sections" data-tour="settings-tabs">
+          <ul className="flex gap-1 overflow-x-auto lg:flex-col">
+            {TABS.map((tab) => (
+              <li key={tab.id}>
+                <button
+                  type="button"
+                  onClick={() => { setActiveTab(tab.id); setFormError(null); }}
+                  aria-current={activeTab === tab.id ? "page" : undefined}
+                  className={`flex w-full items-center gap-2 whitespace-nowrap rounded-lg px-3 py-2 text-sm font-medium ${activeTab === tab.id ? "bg-primary-50 text-primary-700 dark:bg-primary-900/30 dark:text-primary-300" : "text-gray-600 hover:bg-gray-50 dark:text-gray-300 dark:hover:bg-gray-700/50"}`}
+                >
+                  <tab.icon className="h-5 w-5" aria-hidden="true" /> {tab.name}
+                </button>
+              </li>
+            ))}
+          </ul>
+        </nav>
+
+        <form className="card space-y-5 p-6 lg:col-span-3" onSubmit={save} noValidate aria-labelledby="settings-section-title">
+          <h2 id="settings-section-title" className="section-title">{TABS.find((t) => t.id === activeTab).name}</h2>
+
           {activeTab === "profile" && (
-            <div className="card space-y-6">
-              <h2 className="text-lg font-semibold text-gray-900 dark:text-white">Profile</h2>
-              <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-                <div>
-                  <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300" htmlFor="settings-f1">
-                    First Name
-                  </label>
-                  <input id="settings-f1"
-                    type="text"
-                    className="input-field"
-                    value={profileForm.first_name}
-                    onChange={(event) =>
-                      setProfileForm((current) => ({ ...current, first_name: event.target.value }))
-                    }
-                  />
-                </div>
-                <div>
-                  <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300" htmlFor="settings-f2">
-                    Last Name
-                  </label>
-                  <input id="settings-f2"
-                    type="text"
-                    className="input-field"
-                    value={profileForm.last_name}
-                    onChange={(event) =>
-                      setProfileForm((current) => ({ ...current, last_name: event.target.value }))
-                    }
-                  />
-                </div>
-                <div className="md:col-span-2">
-                  <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300" htmlFor="settings-f3">
-                    Email
-                  </label>
-                  <input id="settings-f3" type="email" className="input-field" value={user?.email || ""} disabled />
-                </div>
-              </div>
-              <div className="flex justify-end">
-                <button
-                  className="btn-primary"
-                  onClick={handleProfileSave}
-                  disabled={savingKey === "profile"}
-                >
-                  {savingKey === "profile" ? "Saving..." : "Save Profile"}
-                </button>
-              </div>
-            </div>
-          )}
-
-          {activeTab === "dashboard" && (
-            <div className="card space-y-6">
-              <h2 className="text-lg font-semibold text-gray-900 dark:text-white">
-                Dashboard Preferences
-              </h2>
-              <div>
-                <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300" htmlFor="settings-f4">
-                  Default Dashboard View
-                </label>
-                <select id="settings-f4"
-                  className="input-field"
-                  value={settings.dashboard?.default_view || "overview"}
-                  onChange={(event) =>
-                    updateSettingsState((current) => ({
-                      ...current,
-                      dashboard: {
-                        ...current.dashboard,
-                        default_view: event.target.value,
-                      },
-                    }))
-                  }
-                >
-                  <option value="overview">Overview</option>
-                  <option value="grid">Grid</option>
-                  <option value="list">List</option>
-                  <option value="map">Map</option>
-                </select>
-              </div>
-
-              <div className="space-y-3">
-                <p className="text-sm font-medium text-gray-700 dark:text-gray-300">
-                  Widget Order and Visibility
-                </p>
-                {widgetOrder.map((widgetKey, index) => (
-                  <div
-                    key={widgetKey}
-                    className="flex flex-wrap items-center justify-between gap-3 rounded-lg bg-gray-50 px-4 py-3 dark:bg-gray-800/60"
-                  >
-                    <div>
-                      <p className="font-medium text-gray-900 dark:text-white">
-                        {WIDGET_LABELS[widgetKey] || widgetKey}
-                      </p>
-                      <p className="text-sm text-gray-500 dark:text-gray-400">
-                        Position {index + 1} {hiddenWidgets.has(widgetKey) ? "• hidden" : "• visible"}
-                      </p>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <button
-                        type="button"
-                        className="btn-secondary px-3 py-1 text-sm"
-                        onClick={() => moveWidget(widgetKey, "up")}
-                        disabled={index === 0}
-                      >
-                        Up
-                      </button>
-                      <button
-                        type="button"
-                        className="btn-secondary px-3 py-1 text-sm"
-                        onClick={() => moveWidget(widgetKey, "down")}
-                        disabled={index === widgetOrder.length - 1}
-                      >
-                        Down
-                      </button>
-                      <button
-                        type="button"
-                        className="btn-secondary px-3 py-1 text-sm"
-                        onClick={() => toggleHiddenWidget(widgetKey)}
-                      >
-                        {hiddenWidgets.has(widgetKey) ? "Show" : "Hide"}
-                      </button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-              <div className="flex justify-end">
-                <button
-                  className="btn-primary"
-                  onClick={() =>
-                    saveSettingsSection("dashboard", {
-                      dashboard: settings.dashboard,
-                    })
-                  }
-                  disabled={savingKey === "dashboard"}
-                >
-                  {savingKey === "dashboard" ? "Saving..." : "Save Dashboard Preferences"}
-                </button>
-              </div>
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <Field label="First name" htmlFor="first_name">
+                <input id="first_name" className="input-field" required maxLength={100} value={form.profile.first_name} onChange={(e) => set("profile", "first_name", e.target.value)} />
+              </Field>
+              <Field label="Last name" htmlFor="last_name">
+                <input id="last_name" className="input-field" required maxLength={100} value={form.profile.last_name} onChange={(e) => set("profile", "last_name", e.target.value)} />
+              </Field>
+              <Field label="Department" htmlFor="department">
+                <input id="department" className="input-field" maxLength={100} value={form.profile.department} onChange={(e) => set("profile", "department", e.target.value)} />
+              </Field>
+              <Field label="Job title" htmlFor="job_title">
+                <input id="job_title" className="input-field" maxLength={100} value={form.profile.job_title} onChange={(e) => set("profile", "job_title", e.target.value)} />
+              </Field>
+              <Field label="Phone" htmlFor="phone">
+                <input id="phone" className="input-field" maxLength={20} inputMode="tel" value={form.profile.phone} onChange={(e) => set("profile", "phone", e.target.value)} />
+              </Field>
+              <Field label="E-mail" htmlFor="email" hint="Your sign-in e-mail cannot be changed here.">
+                <input id="email" className="input-field" value={data.profile.email} readOnly aria-readonly="true" />
+              </Field>
+              <p className="text-xs text-gray-500 dark:text-gray-400 sm:col-span-2">Change your password on the Profile page; it asks for your current password.</p>
             </div>
           )}
 
           {activeTab === "appearance" && (
-            <div className="card space-y-6">
-              <h2 className="text-lg font-semibold text-gray-900 dark:text-white">Appearance</h2>
-              <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-                <div>
-                  <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300" htmlFor="settings-f5">
-                    Theme
-                  </label>
-                  <select id="settings-f5"
-                    className="input-field"
-                    value={settings.appearance?.theme || "light"}
-                    onChange={(event) =>
-                      updateSettingsState((current) => ({
-                        ...current,
-                        appearance: {
-                          ...current.appearance,
-                          theme: event.target.value,
-                        },
-                      }))
-                    }
-                  >
-                    <option value="light">Light</option>
-                    <option value="dark">Dark</option>
-                  </select>
-                </div>
-                <div>
-                  <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300" htmlFor="settings-f6">
-                    Timezone
-                  </label>
-                  <select id="settings-f6"
-                    className="input-field"
-                    value={settings.appearance?.timezone || "UTC"}
-                    onChange={(event) =>
-                      updateSettingsState((current) => ({
-                        ...current,
-                        appearance: {
-                          ...current.appearance,
-                          timezone: event.target.value,
-                        },
-                      }))
-                    }
-                  >
-                    <option value="UTC">UTC</option>
-                    <option value="America/New_York">Eastern Time</option>
-                    <option value="America/Los_Angeles">Pacific Time</option>
-                    <option value="Europe/London">London</option>
-                    <option value="Asia/Karachi">Karachi</option>
-                  </select>
-                </div>
-              </div>
-              <div className="flex justify-end">
-                <button
-                  className="btn-primary"
-                  onClick={() =>
-                    saveSettingsSection("appearance", {
-                      appearance: settings.appearance,
-                    })
-                  }
-                  disabled={savingKey === "appearance"}
-                >
-                  {savingKey === "appearance" ? "Saving..." : "Save Appearance"}
-                </button>
-              </div>
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <Field label="Theme" htmlFor="theme" hint="Applied immediately after saving and on every sign-in.">
+                <select id="theme" className="input-field" value={form.appearance.theme} onChange={(e) => set("appearance", "theme", e.target.value)}>
+                  <option value="light">Light</option>
+                  <option value="dark">Dark</option>
+                </select>
+              </Field>
+              <Field label="Date format" htmlFor="date_format" hint="Used for dates on the Remediation, Audit Trail and Settings pages.">
+                <select id="date_format" className="input-field" value={form.appearance.date_format} onChange={(e) => set("appearance", "date_format", e.target.value)}>
+                  {data.options.date_formats.map((f) => <option key={f} value={f}>{f} ({DATE_FORMAT_EXAMPLES[f]})</option>)}
+                </select>
+              </Field>
             </div>
           )}
 
-          {activeTab === "notifications" && (
-            <div className="card space-y-6">
-              <h2 className="text-lg font-semibold text-gray-900 dark:text-white">
-                Notification Preferences
-              </h2>
-              <div className="space-y-4">
-                {[
-                  ["email", "Email Notifications", "Receive notification emails"],
-                  ["push", "Push Notifications", "Receive in-app notification prompts"],
-                  ["sms", "SMS Notifications", "Receive SMS notifications if support is added later"],
-                ].map(([key, label, description]) => (
-                  <div
-                    key={key}
-                    className="flex items-center justify-between rounded-lg bg-gray-50 p-4 dark:bg-gray-800/60"
-                  >
-                    <div>
-                      <p className="font-medium text-gray-900 dark:text-white">{label}</p>
-                      <p className="text-sm text-gray-500 dark:text-gray-400">{description}</p>
-                    </div>
-                    <input
-                      type="checkbox"
-                      className="h-5 w-5 rounded text-primary-600"
-                      checked={Boolean(settings.notifications?.[key])}
-                      onChange={(event) =>
-                        updateSettingsState((current) => ({
-                          ...current,
-                          notifications: {
-                            ...current.notifications,
-                            [key]: event.target.checked,
-                          },
-                        }))
-                      }
-                    />
-                  </div>
-                ))}
-              </div>
+          {activeTab === "dashboard" && (
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <Field label="Default organization" htmlFor="default_org" hint="Selected automatically when you sign in. Only organizations you belong to are listed.">
+                <select id="default_org" className="input-field" value={form.dashboard.default_organization_id} onChange={(e) => set("dashboard", "default_organization_id", e.target.value)}>
+                  <option value="">First available organization</option>
+                  {organizations.map((org) => <option key={org.id} value={org.id}>{org.name}</option>)}
+                </select>
+              </Field>
+              <Field label="Default resource view" htmlFor="default_view" hint="How the Resources page lists your VMs when it opens.">
+                <select id="default_view" className="input-field" value={form.dashboard.default_view} onChange={(e) => set("dashboard", "default_view", e.target.value)}>
+                  <option value="grid">Grid (cards)</option>
+                  <option value="list">List (table)</option>
+                </select>
+              </Field>
+            </div>
+          )}
 
-              <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-                {[
-                  ["cost_alerts", "Cost Alerts"],
-                  ["security_alerts", "Security Alerts"],
-                  ["compliance_alerts", "Compliance Alerts"],
-                  ["maintenance_notifications", "Maintenance Notices"],
-                  ["feature_announcements", "Feature Announcements"],
-                  ["email_cost_alerts", "Email Cost Alerts"],
-                  ["email_security_alerts", "Email Security Alerts"],
-                  ["in_app_cost_alerts", "In-app Cost Alerts"],
-                  ["in_app_security_alerts", "In-app Security Alerts"],
-                ].map(([key, label]) => (
-                  <label
-                    key={key}
-                    className="flex items-center justify-between rounded-lg bg-gray-50 px-4 py-3 dark:bg-gray-800/60"
-                  >
-                    <span className="text-sm font-medium text-gray-900 dark:text-white">{label}</span>
-                    <input
-                      type="checkbox"
-                      className="h-5 w-5 rounded text-primary-600"
-                      checked={Boolean(settings.notifications?.preferences?.[key])}
-                      onChange={(event) =>
-                        updateSettingsState((current) => ({
-                          ...current,
-                          notifications: {
-                            ...current.notifications,
-                            preferences: {
-                              ...current.notifications.preferences,
-                              [key]: event.target.checked,
-                            },
-                          },
-                        }))
-                      }
-                    />
-                  </label>
-                ))}
-              </div>
-
-              <div>
-                <label className="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300" htmlFor="settings-f7">
-                  Cost Alert Threshold (%)
-                </label>
-                <input id="settings-f7"
-                  type="range"
-                  min="50"
-                  max="100"
-                  className="w-full"
-                  value={settings.notifications?.preferences?.cost_threshold || 80}
-                  onChange={(event) =>
-                    updateSettingsState((current) => ({
-                      ...current,
-                      notifications: {
-                        ...current.notifications,
-                        preferences: {
-                          ...current.notifications.preferences,
-                          cost_threshold: Number(event.target.value),
-                        },
-                      },
-                    }))
-                  }
-                />
-                <div className="mt-1 flex justify-between text-xs text-gray-500">
-                  <span>50%</span>
-                  <span>{settings.notifications?.preferences?.cost_threshold || 80}%</span>
-                  <span>100%</span>
-                </div>
-              </div>
-              <div className="flex justify-end">
-                <button
-                  className="btn-primary"
-                  onClick={() =>
-                    saveSettingsSection("notifications", {
-                      notifications: settings.notifications,
-                    })
-                  }
-                  disabled={savingKey === "notifications"}
-                >
-                  {savingKey === "notifications" ? "Saving..." : "Save Notifications"}
-                </button>
-              </div>
+          {activeTab === "alerts" && (
+            <div className="space-y-3">
+              <p className="text-sm text-gray-600 dark:text-gray-300">
+                These preferences control the in-app alerts under the bell icon in the header. E-mail, SMS and push delivery are not available in this build.
+              </p>
+              <Toggle id="security_alerts" label="Security alerts" description="Open threats in the current organization." checked={form.alerts.security_alerts} onChange={(v) => set("alerts", "security_alerts", v)} />
+              <Field label="Minimum threat severity" htmlFor="security_severity">
+                <select id="security_severity" className="input-field" disabled={!form.alerts.security_alerts} value={form.alerts.security_severity} onChange={(e) => set("alerts", "security_severity", e.target.value)}>
+                  {data.options.severities.map((s) => <option key={s} value={s}>{s.charAt(0).toUpperCase() + s.slice(1)} and above</option>)}
+                </select>
+              </Field>
+              <Toggle id="cost_alerts" label="Cost alerts" description="Budgets whose spend has reached your threshold." checked={form.alerts.cost_alerts} onChange={(v) => set("alerts", "cost_alerts", v)} />
+              <Field label="Cost alert threshold (% of budget)" htmlFor="cost_threshold" hint={`Between ${data.options.cost_threshold_range[0]} and ${data.options.cost_threshold_range[1]}.`}>
+                <input id="cost_threshold" className="input-field" inputMode="decimal" disabled={!form.alerts.cost_alerts} value={form.alerts.cost_threshold} onChange={(e) => set("alerts", "cost_threshold", e.target.value)} />
+              </Field>
+              <Toggle id="compliance_alerts" label="Governance alerts" description="Open policy violations from the latest compliance check." checked={form.alerts.compliance_alerts} onChange={(v) => set("alerts", "compliance_alerts", v)} />
             </div>
           )}
 
           {activeTab === "security" && (
-            <div className="card space-y-6">
-              <h2 className="text-lg font-semibold text-gray-900 dark:text-white">Security</h2>
-              <div className="rounded-lg border border-gray-200 bg-gray-50 p-4 dark:border-gray-700 dark:bg-gray-800/60">
-                <p className="font-medium text-gray-900 dark:text-white">
-                  Two-Factor Authentication
-                </p>
-                <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
-                  Two-factor authentication is not enabled in this build. No recovery codes or OTP enrollment flow are available.
-                </p>
-              </div>
-
-              <div className="space-y-4">
-                <label className="flex items-center justify-between rounded-lg bg-gray-50 p-4 dark:bg-gray-800/60">
-                  <div>
-                    <p className="font-medium text-gray-900 dark:text-white">Login Notifications</p>
-                    <p className="text-sm text-gray-500 dark:text-gray-400">
-                      Notify me when a new login is detected.
-                    </p>
-                  </div>
-                  <input
-                    type="checkbox"
-                    className="h-5 w-5 rounded text-primary-600"
-                    checked={Boolean(settings.security?.login_notifications)}
-                    onChange={(event) =>
-                      updateSettingsState((current) => ({
-                        ...current,
-                        security: {
-                          ...current.security,
-                          login_notifications: event.target.checked,
-                        },
-                      }))
-                    }
-                  />
-                </label>
-
-                <label className="flex items-center justify-between rounded-lg bg-gray-50 p-4 dark:bg-gray-800/60">
-                  <div>
-                    <p className="font-medium text-gray-900 dark:text-white">
-                      Suspicious Activity Alerts
-                    </p>
-                    <p className="text-sm text-gray-500 dark:text-gray-400">
-                      Notify me about suspicious account activity.
-                    </p>
-                  </div>
-                  <input
-                    type="checkbox"
-                    className="h-5 w-5 rounded text-primary-600"
-                    checked={Boolean(settings.security?.suspicious_activity_alerts)}
-                    onChange={(event) =>
-                      updateSettingsState((current) => ({
-                        ...current,
-                        security: {
-                          ...current.security,
-                          suspicious_activity_alerts: event.target.checked,
-                        },
-                      }))
-                    }
-                  />
-                </label>
-
-                <div>
-                  <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300" htmlFor="settings-f8">
-                    Session Timeout
-                  </label>
-                  <select id="settings-f8"
-                    className="input-field w-48"
-                    value={settings.security?.session_timeout || 30}
-                    onChange={(event) =>
-                      updateSettingsState((current) => ({
-                        ...current,
-                        security: {
-                          ...current.security,
-                          session_timeout: Number(event.target.value),
-                        },
-                      }))
-                    }
-                  >
-                    <option value={15}>15 min</option>
-                    <option value={30}>30 min</option>
-                    <option value={60}>1 hour</option>
-                    <option value={120}>2 hours</option>
-                  </select>
-                </div>
-              </div>
-              <div className="flex justify-end">
-                <button
-                  className="btn-primary"
-                  onClick={() =>
-                    saveSettingsSection("security", {
-                      security: settings.security,
-                    })
-                  }
-                  disabled={savingKey === "security"}
-                >
-                  {savingKey === "security" ? "Saving..." : "Save Security Settings"}
-                </button>
-              </div>
+            <div className="space-y-4">
+              <Field label="Sign out after inactivity (minutes)" htmlFor="session_timeout" hint={`Between ${data.options.session_timeout_range[0]} and ${data.options.session_timeout_range[1]}. Sessions also end when the 1-hour access token expires.`}>
+                <input id="session_timeout" type="number" className="input-field" min={data.options.session_timeout_range[0]} max={data.options.session_timeout_range[1]} value={form.security.session_timeout} onChange={(e) => set("security", "session_timeout", e.target.value)} />
+              </Field>
+              <p className="rounded-lg bg-gray-50 p-3 text-xs text-gray-600 dark:bg-gray-700/40 dark:text-gray-300">
+                Two-factor authentication is not available in this build. Signing out revokes your tokens immediately, and
+                repeated failed sign-ins lock the account for 15 minutes.
+              </p>
             </div>
           )}
-        </div>
+
+          {formError && <p className="text-sm text-red-600 dark:text-red-400" role="alert">{formError}</p>}
+          <div className="flex justify-end border-t border-gray-200 pt-4 dark:border-gray-700">
+            <button type="submit" className="btn-primary disabled:opacity-50" disabled={saving} data-tour="settings-save">
+              {saving ? "Saving…" : "Save changes"}
+            </button>
+          </div>
+        </form>
       </div>
     </div>
   );

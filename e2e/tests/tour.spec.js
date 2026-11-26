@@ -72,7 +72,7 @@ test('new account is offered the tour once; steps, back, skip and persistence wo
   const total = Number((await progress(page).innerText()).match(/of (\d+)/)[1]);
   for (let i = 1; i < total; i += 1) await next(page);
   await expect(title(page)).toHaveText('Need this again?');
-  await expect(page).toHaveURL(/\/reports$/);
+  await expect(page).toHaveURL(/\/settings$/); // the tour now ends on Module 12
   await page.locator('.driver-popover-done-btn').click();
   await expect(popover(page)).toHaveCount(0);
 });
@@ -84,12 +84,14 @@ test('tour preference is stored per user, not per browser', async ({ page, reque
   await login(page, first);
   await page.getByTestId('tour-skip-welcome').click();
   await page.getByRole('button', { name: 'Log out' }).click();
+  await expect(page).toHaveURL(/\/login/);
 
   await login(page, second);
   await expect(page.getByTestId('tour-start')).toBeVisible(); // second user still gets the offer
   await page.getByTestId('tour-skip-welcome').click();
 
   await page.getByRole('button', { name: 'Log out' }).click();
+  await expect(page).toHaveURL(/\/login/);
   await login(page, first);
   await expect(page.getByTestId('tour-start')).toHaveCount(0); // first user's dismissal remembered
 });
@@ -124,7 +126,7 @@ test('viewers do not see steps for controls they do not have', async ({ page, re
   await login(page, email);
   await page.getByTestId('tour-start').click();
   const total = Number((await progress(page).innerText()).match(/of (\d+)/)[1]);
-  expect(total).toBeLessThan(18); // owner sees 18 steps
+  expect(total).toBeLessThan(26); // owner sees 26 steps (Modules 1–12)
   const seen = [];
   while (!(await page.locator('.driver-popover-done-btn').isVisible())) {
     await next(page);

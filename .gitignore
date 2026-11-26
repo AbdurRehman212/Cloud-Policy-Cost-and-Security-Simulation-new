@@ -1,6 +1,8 @@
 # ── Environment & secrets ──────────────────────────────────────────────────────
 .env
 .env.*
+!.env.example
+!backend/.env.example
 backend/.env
 frontend/.env
 .superpowers/
@@ -50,6 +52,9 @@ frontend/build/
 node_modules/
 build/
 package-lock.json
+# lockfiles CI installs from must be versioned
+!frontend/package-lock.json
+!e2e/package-lock.json
 *.tsbuildinfo
 .vite/
 .parcel-cache/
@@ -73,3 +78,8 @@ clear_resources.py
 # ── OS ──────────────────────────────────────────────────────────────────────────
 .DS_Store
 Thumbs.db
+
+# ── Local run artefacts and university documents (not source) ───────────────────
+logs/
+/*.pdf
+/*.docx

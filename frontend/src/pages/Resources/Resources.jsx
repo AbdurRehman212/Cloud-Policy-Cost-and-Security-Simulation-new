@@ -9,6 +9,7 @@ import { useSelector } from "react-redux";
 import axios from "axios";
 import { createSocket } from "../../services/api";
 import LearningPanel from "../../components/Learning/LearningPanel";
+import { selectDefaultView } from "../../store/slices/settingsSlice";
 import {
   PlusIcon,
   CircleStackIcon,
@@ -884,6 +885,9 @@ const Resources = () => {
   const [createMode, setCreateMode] = useState("vm");
   const [selectedVM, setSelectedVM] = useState(null);
   const [activeTab, setActiveTab] = useState("resources");
+  const defaultView = useSelector(selectDefaultView);
+  const [viewMode, setViewMode] = useState(defaultView);
+  useEffect(() => setViewMode(defaultView), [defaultView]);
   const [selectedSecurityGroupIds, setSelectedSecurityGroupIds] = useState([]);
   const [newVM, setNewVM] = useState({
     name: "",
@@ -1502,6 +1506,59 @@ const Resources = () => {
 
       {activeTab === "resources" ? (
         <>
+          <div className="mb-3 flex items-center justify-end gap-2" role="group" aria-label="Resource layout">
+            {["grid", "list"].map((mode) => (
+              <button
+                key={mode}
+                type="button"
+                aria-pressed={viewMode === mode}
+                onClick={() => setViewMode(mode)}
+                className={`rounded-lg px-3 py-1.5 text-xs font-medium ${viewMode === mode ? "bg-primary-600 text-white" : "bg-white text-gray-700 ring-1 ring-gray-200 hover:bg-gray-50 dark:bg-gray-800 dark:text-gray-200 dark:ring-gray-700"}`}
+              >
+                {mode === "grid" ? "Grid" : "List"}
+              </button>
+            ))}
+          </div>
+          {viewMode === "list" ? (
+            <div className="card overflow-x-auto p-0" data-tour="resource-grid">
+              <table className="min-w-full text-sm">
+                <thead>
+                  <tr className="border-b border-gray-200 text-left text-xs uppercase tracking-wide text-gray-500 dark:border-gray-700 dark:text-gray-400">
+                    <th scope="col" className="px-4 py-2">Name</th>
+                    <th scope="col" className="px-4 py-2">Type</th>
+                    <th scope="col" className="px-4 py-2">Status</th>
+                    <th scope="col" className="px-4 py-2">Size</th>
+                    <th scope="col" className="px-4 py-2 text-right">CPU</th>
+                    <th scope="col" className="px-4 py-2 text-right">$/hour</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(resources || []).map((resource) => (
+                    <tr key={resource?.id} className="border-b border-gray-100 dark:border-gray-700/60">
+                      <td className="px-4 py-2">
+                        {resource?.type === "vm" ? (
+                          <button type="button" className="font-medium text-primary-700 hover:underline dark:text-primary-300" onClick={() => setSelectedVM(resource || null)}>
+                            {resource?.name}
+                          </button>
+                        ) : (
+                          <span className="font-medium text-gray-900 dark:text-white">{resource?.name}</span>
+                        )}
+                      </td>
+                      <td className="px-4 py-2 text-gray-600 dark:text-gray-300">{resource?.type === "database" ? "Database" : "VM"}</td>
+                      <td className="px-4 py-2 text-gray-600 dark:text-gray-300">{resource?.status}</td>
+                      <td className="px-4 py-2 font-mono text-xs text-gray-600 dark:text-gray-300">{resource?.instance_type || resource?.instance_class || "—"}</td>
+                      <td className="px-4 py-2 text-right tabular-nums text-gray-600 dark:text-gray-300">{Number(resource?.cpu_percent ?? resource?.cpu ?? 0).toFixed(1)}%</td>
+                      <td className="px-4 py-2 text-right tabular-nums text-gray-600 dark:text-gray-300">{resource?.hourly_rate != null ? Number(resource.hourly_rate).toFixed(4) : "—"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              {resources?.length === 0 && !loading && (
+                <p className="px-4 py-8 text-center text-sm text-gray-500 dark:text-gray-400">No resources yet. Create your first VM or Database to get started.</p>
+              )}
+              {loading && <p className="px-4 py-8 text-center text-sm text-gray-500 dark:text-gray-400">Loading resources...</p>}
+            </div>
+          ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6" data-tour="resource-grid">
             {resources?.map((resource) => {
               const safeId = resource?.id || "fallback-id";
@@ -1680,6 +1737,7 @@ const Resources = () => {
               </div>
             )}
           </div>
+          )}
 
           <VmDetailModal
             vm={selectedVM}

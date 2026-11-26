@@ -1,5 +1,7 @@
 from datetime import datetime
 from enum import Enum
+from sqlalchemy import event
+
 from app import db
 class PolicyStatus(Enum):
     DRAFT = 'draft'
@@ -74,31 +76,49 @@ class ComplianceCheck(db.Model):
             'remediation_details': self.remediation_details,
         }
 class AuditLog(db.Model):
-    """Comprehensive audit trail."""
+    """Append-only audit trail (Module 11).
+
+    Rows are written only through ``app.services.audit_service.record_audit``.
+    Updates and deletes through the ORM are rejected by the listeners below; no API
+    route edits or deletes audit rows. ``organization_id`` is NULL for account-level
+    events (login, password change, settings) that do not belong to one tenant.
+    """
     __tablename__ = 'audit_logs'
     id = db.Column(db.Integer, primary_key=True)
-    organization_id = db.Column(db.Integer, db.ForeignKey('organizations.id'), nullable=False)
-    user_id = db.Column(db.Integer, db.ForeignKey('users.id'))
-    action = db.Column(db.String(100), nullable=False)  # create, update, delete, login, etc.
+    organization_id = db.Column(db.Integer, db.ForeignKey('organizations.id'), nullable=True, index=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), index=True)
+    action = db.Column(db.String(100), nullable=False)  # e.g. vm_created, login_succeeded
+    category = db.Column(db.String(30), index=True)  # auth, organization, resource, security, ...
+    outcome = db.Column(db.String(20), default='success')  # success, failure, denied
     resource_type = db.Column(db.String(50))  # vm, database, policy, etc.
     resource_id = db.Column(db.String(50))
     timestamp = db.Column(db.DateTime, default=datetime.utcnow, index=True)
     # Details
     old_values = db.Column(db.JSON)
     new_values = db.Column(db.JSON)
-    ip_address = db.Column(db.String(15))
+    ip_address = db.Column(db.String(45))
     user_agent = db.Column(db.String(500))
     session_id = db.Column(db.String(255))
     # Compliance
     compliance_relevant = db.Column(db.Boolean, default=False)
     retention_until = db.Column(db.DateTime)
+
+    actor = db.relationship('User', foreign_keys=[user_id], lazy='joined')
+
     def to_dict(self):
+        actor = self.actor
         return {
             'id': self.id,
             'org_id': self.organization_id,
             'organization_id': self.organization_id,
             'user_id': self.user_id,
+            'actor': (
+                {'id': actor.id, 'name': f'{actor.first_name} {actor.last_name}'.strip()}
+                if actor else None
+            ),
             'action': self.action,
+            'category': self.category,
+            'outcome': self.outcome or 'success',
             'resource_type': self.resource_type,
             'resource_id': self.resource_id,
             'timestamp': self.timestamp.isoformat() if self.timestamp else None,
@@ -109,3 +129,13 @@ class AuditLog(db.Model):
                 'new': self.new_values
             }
         }
+
+
+@event.listens_for(AuditLog, 'before_update')
+def _audit_log_is_immutable(mapper, connection, target):
+    raise ValueError('Audit log entries are append-only and cannot be modified')
+
+
+@event.listens_for(AuditLog, 'before_delete')
+def _audit_log_is_undeletable(mapper, connection, target):
+    raise ValueError('Audit log entries are append-only and cannot be deleted')

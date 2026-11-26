@@ -118,7 +118,7 @@ export const TOUR_STEPS = [
     title: 'Detected threats',
     text:
       'Threats found for your organization are listed here with type, severity and confidence. ' +
-      'Admins can mark one as resolved once it is handled.',
+      'Use Remediate to fix one with the Remediation Agent (Module 10).',
   },
   {
     id: 'compliance',
@@ -186,8 +186,83 @@ export const TOUR_STEPS = [
     text: 'Download the raw records as CSV to open in a spreadsheet.',
   },
   {
+    id: 'remediation-issues',
+    route: '/remediation',
+    target: 'remediation-issues',
+    module: 'Module 10 · Remediation Agent',
+    title: 'Issues to fix',
+    text:
+      'Open threats, policy violations and idle servers are collected here. ' +
+      'Select one to ask the Remediation Agent what to do about it.',
+  },
+  {
+    id: 'remediation-plan',
+    route: '/remediation',
+    target: 'remediation-plan',
+    module: 'Module 10 · Remediation Agent',
+    title: 'Review, approve, execute',
+    text:
+      'Each recommended action explains why it is suggested, what it changes (before and after) and how to undo it. ' +
+      'Admins and owners tick the actions, approve the changes and execute them. ' +
+      'The issue is marked resolved only after the change is checked. Uncertain detections go to human review.',
+  },
+  {
+    id: 'remediation-history',
+    route: '/remediation',
+    target: 'remediation-history',
+    module: 'Module 10 · Remediation Agent',
+    title: 'Action history',
+    text: 'Every executed, failed or review-only action is listed with its result.',
+  },
+  {
+    id: 'audit-filters',
+    route: '/audit',
+    target: 'audit-filters',
+    module: 'Module 11 · Audit Trail',
+    title: 'Search the audit trail',
+    text:
+      'Filter recorded activity by type, outcome, text and dates. ' +
+      'Admins and owners see the whole organization; other roles see their own actions.',
+  },
+  {
+    id: 'audit-timeline',
+    route: '/audit',
+    target: 'audit-timeline',
+    module: 'Module 11 · Audit Trail',
+    title: 'Timeline',
+    text:
+      'Events are grouped by day, newest first. Open one to see who did it and what changed. ' +
+      'Audit entries cannot be edited or deleted.',
+  },
+  {
+    id: 'settings-tabs',
+    route: '/settings',
+    target: 'settings-tabs',
+    module: 'Module 12 · User Settings',
+    title: 'Your settings',
+    text:
+      'Edit your profile, theme, date format, default organization, resource layout, alert preferences ' +
+      'and inactivity sign-out. Settings are saved to your account and used on every sign-in.',
+  },
+  {
+    id: 'settings-reset',
+    route: '/settings',
+    target: 'settings-reset',
+    module: 'Module 12 · User Settings',
+    title: 'Restore defaults',
+    text: 'Puts every preference back to its default. Your profile details are kept.',
+  },
+  {
+    id: 'alerts',
+    route: '/settings',
+    target: 'alerts',
+    module: 'Module 12 · User Settings',
+    title: 'Alerts',
+    text: 'The bell shows in-app alerts for the current organization, filtered by your alert preferences.',
+  },
+  {
     id: 'help',
-    route: '/reports',
+    route: '/settings',
     target: 'help',
     module: 'Finished',
     title: 'Need this again?',

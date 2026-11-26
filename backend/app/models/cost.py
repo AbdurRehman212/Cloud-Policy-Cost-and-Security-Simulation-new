@@ -55,7 +55,7 @@ class Budget(db.Model):
         Periods repeat from start_date (monthly/quarterly/yearly), so a monthly budget is
         measured against the current month only. An explicit end_date caps the window.
         """
-        today = today or date.today()
+        today = today or datetime.utcnow().date()  # cost records use UTC dates
         months = self.PERIOD_MONTHS.get(self.period, 1)
         start = self.start_date
         while self._add_months(start, months) <= today:

@@ -1,9 +1,10 @@
-import React, { useEffect, useState } from "react";
-import { Outlet } from "react-router-dom";
-import { useLocation } from "react-router-dom";
+import React, { useEffect, useRef, useState } from "react";
+import { Outlet, useLocation, useNavigate } from "react-router-dom";
+import toast from "react-hot-toast";
 import { useDispatch, useSelector } from "react-redux";
-import { fetchProfile } from "../../store/slices/authSlice";
-import { fetchOrganizations } from "../../store/slices/organizationSlice";
+import { fetchProfile, logoutUser } from "../../store/slices/authSlice";
+import { fetchOrganizations, switchOrganization } from "../../store/slices/organizationSlice";
+import { clearSettings, fetchSettings } from "../../store/slices/settingsSlice";
 import { fetchVMs } from "../../store/slices/resourceSlice";
 import Sidebar from "./Sidebar";
 import Header from "./Header";
@@ -13,6 +14,9 @@ import { TourProvider } from "../../tour/TourProvider";
 const Layout = () => {
   const dispatch = useDispatch();
   const location = useLocation();
+  const navigate = useNavigate();
+  const settings = useSelector((state) => state.settings.data);
+  const lastActivity = useRef(Date.now());
   const { isAuthenticated } = useSelector((state) => state.auth);
   const { organizations, currentOrganization } = useSelector(
     (state) => state.organization,
@@ -39,7 +43,43 @@ const Layout = () => {
     if (!isAuthenticated) return;
     dispatch(fetchProfile());
     dispatch(fetchOrganizations());
+    dispatch(fetchSettings()); // applies the saved theme as soon as it arrives
   }, [dispatch, isAuthenticated]);
+
+  // Saved default organization: applied once at the start of each browser session.
+  useEffect(() => {
+    const defaultOrgId = settings?.dashboard?.default_organization_id;
+    if (!defaultOrgId || organizations.length === 0) return;
+    let applied = null;
+    try { applied = sessionStorage.getItem("fyp:default-org-applied"); } catch (_e) { /* storage blocked */ }
+    if (applied) return;
+    const target = organizations.find((o) => o.id === defaultOrgId);
+    if (target && target.id !== currentOrganization?.id) dispatch(switchOrganization(target));
+    try { sessionStorage.setItem("fyp:default-org-applied", "1"); } catch (_e) { /* ignore */ }
+  }, [settings?.dashboard?.default_organization_id, organizations, currentOrganization?.id, dispatch]);
+
+  // Sign out after the saved period of inactivity (Settings → Security).
+  useEffect(() => {
+    const minutes = settings?.security?.session_timeout;
+    if (!isAuthenticated || !minutes) return undefined;
+    const touch = () => { lastActivity.current = Date.now(); };
+    const events = ["mousedown", "keydown", "scroll", "touchstart"];
+    events.forEach((e) => window.addEventListener(e, touch, { passive: true }));
+    const timer = window.setInterval(async () => {
+      if (Date.now() - lastActivity.current > minutes * 60 * 1000) {
+        window.clearInterval(timer);
+        await dispatch(logoutUser());
+        dispatch(clearSettings());
+        try { sessionStorage.removeItem("fyp:default-org-applied"); } catch (_e) { /* ignore */ }
+        toast(`Signed out after ${minutes} minutes of inactivity.`);
+        navigate("/login");
+      }
+    }, 30000);
+    return () => {
+      window.clearInterval(timer);
+      events.forEach((e) => window.removeEventListener(e, touch));
+    };
+  }, [settings?.security?.session_timeout, isAuthenticated, dispatch, navigate]);
 
   useEffect(() => {
     if (currentOrganization?.id) {

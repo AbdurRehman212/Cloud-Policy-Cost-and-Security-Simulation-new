@@ -2,6 +2,7 @@ from datetime import datetime, timedelta
 from flask import current_app
 from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required, get_jwt_identity
+from app.utils.identity import get_jwt_identity  # int identity; tokens carry it as a string
 from app import db, socketio
 from app.utils.rbac import active_membership
 from app.services.learning_context_engine import learning_context_service
@@ -463,6 +464,7 @@ def _vm_to_envelope(vm: VirtualMachine) -> dict:
         'id': vm.id,
         'name': vm.name,
         'type': 'vm',
+        'instance_id': vm.instance_id,
         'instance_type': vm.instance_type,
         'engine': None,
         'cpu': cpu_norm,

@@ -71,3 +71,26 @@ def test_rbac_and_isolation(client, world):  # TC-M7-11..12
     for path in ('policies', 'violations', 'score', 'audit-logs', 'compliance/checks'):
         r = client.get(f"{G}/{path}?organization_id={world['org_a']}", headers=world['other'])
         assert r.status_code == 403, path
+
+
+def test_unknown_rule_keys_are_rejected_not_silently_ignored():
+    from app.ai_models.policy_engine import policy_engine
+    result = policy_engine.parse_policy('resource_type=vm;required_tags=owner')
+    assert result['success'] is False and 'required_tags' in result['error']
+
+
+def test_bare_tag_rule_requires_the_tag_with_any_value():
+    from app.ai_models.policy_engine import policy_engine
+    rule = policy_engine.parse_policy('resource_type=vm;tag=owner')['parsed_rule']['fields']
+    assert rule['required_tags'] == [{'key': 'owner', 'value': ''}]
+    untagged = {'resource_kind': 'vm', 'tags': []}
+    tagged = {'resource_kind': 'vm', 'tags': [{'key': 'owner', 'value': 'team-a'}]}
+    assert policy_engine.evaluate_resource(rule, untagged)['violations'] == ['Required tag missing: owner']
+    assert policy_engine.evaluate_resource(rule, tagged)['compliant'] is True
+
+
+def test_policy_text_is_length_bounded_and_name_rule_still_parses():
+    from app.ai_models.policy_engine import policy_engine
+    assert policy_engine.parse_policy('x=' + 'a' * 600)['success'] is False
+    parsed = policy_engine.parse_policy('VM names must match ^web-')
+    assert parsed['success'] and parsed['parsed_rule']['fields']['required_name_regex'] == '^web-'

@@ -32,4 +32,14 @@ New accounts (created < 24 h ago) are offered a tour after login; everyone can r
 - `POST /api/admin/reset-system` deletes data for every organization and is **disabled** (404) unless `ALLOW_SYSTEM_RESET=true` is set in `backend/.env`. Prefer `python backend/scripts/reset_system.py` for a local reset.
 - `GET /api/security/model-info` (any signed-in user) shows which threat model version/features the running backend loaded.
 - UI/accessibility sweep: `cd e2e && npx playwright test tests/ui-quality.spec.js` (add `E2E_SHOTS=<dir>` to save screenshots). Details and findings: `docs/ENGINEERING_QUALITY_REPORT.md`.
-- CI (`.github/workflows/ci.yml`) runs backend tests on PostgreSQL and the frontend build; Playwright is run locally.
+- CI (`.github/workflows/ci.yml`): backend tests on PostgreSQL (incl. schema-upgrade and Socket.IO tests), frontend build with CI=true, Playwright e2e against a CI-only database, dependency audit. `codeql.yml`: code scanning for Python and JavaScript.
+- New machine: copy `backend/.env.example` to `backend/.env` and fill in real values.
+
+## Modules 10–12
+- Remediation: `/remediation` (UI), `GET /api/remediation/issues`, `POST /api/remediation/plan`, `POST /api/remediation/execute` (admin/owner, `approved: true` for configuration changes), `GET /api/remediation/history`. Acts on simulated rows only.
+- Audit trail: `/audit` (UI), `GET /api/audit/events` (filters: `category`, `outcome`, `action`, `q`, `date_from`, `date_to`, `page`, `per_page`), `/api/audit/events/<id>`, `/api/audit/summary`, `/api/audit/me`. Read-only by design.
+- Settings: `GET/PUT /api/settings`, `POST /api/settings/reset`, `GET /api/settings/alerts?organization_id=`.
+- Schema: on every start `backend/app/utils/schema_upgrade.py` adds missing columns/indexes (additive only, PostgreSQL). No data is deleted.
+- Login lockout: 5 failed sign-ins in 15 minutes lock that account for the rest of the window (HTTP 429).
+- Cross-module e2e: `cd e2e && npx playwright test tests/modules-10-12.spec.js` (add `E2E_SHOTS=<dir>` for screenshots).
+- ML evidence: `cd backend && python scripts/evaluate_threat_detector.py` (≈1 min; prints configurations A and B).

@@ -58,6 +58,16 @@ def create_app(config_name='default'):
     db.init_app(app)
     migrate.init_app(app, db)
     jwt.init_app(app)
+
+    @jwt.user_identity_loader
+    def _identity_as_string(identity):
+        # RFC 7519 / PyJWT >= 2.10: "sub" must be a string. Read back with app.utils.identity.
+        return str(identity)
+
+    @jwt.token_in_blocklist_loader
+    def _token_revoked(_jwt_header, jwt_payload):
+        from app.models.user import TokenBlacklist
+        return TokenBlacklist.query.filter_by(jti=jwt_payload.get('jti')).first() is not None
     mail.init_app(app)
     socketio.init_app(app)
     from app.services.resource_simulator import ResourceSimulator
@@ -107,6 +117,10 @@ def create_app(config_name='default'):
     app.register_blueprint(cost_bp, url_prefix='/api/cost')
     app.register_blueprint(reports_bp, url_prefix='/api/reports')
     app.register_blueprint(settings_bp, url_prefix='/api/settings')
+    from app.routes.remediation import remediation_bp
+    from app.routes.audit import audit_bp
+    app.register_blueprint(remediation_bp, url_prefix='/api/remediation')
+    app.register_blueprint(audit_bp, url_prefix='/api/audit')
     app.register_blueprint(dashboard_bp, url_prefix='/api/dashboard')
     app.register_blueprint(assistant_bp, url_prefix='/api/assistant')
     app.register_blueprint(learning_bp, url_prefix='/api/learning')
@@ -119,6 +133,8 @@ def create_app(config_name='default'):
     # Create database tables
     with app.app_context():
         db.create_all()
+        from app.utils.schema_upgrade import upgrade_schema
+        upgrade_schema(db)
 
         if not app.config.get('TESTING'):
             # ── Control-plane snapshot cache (2-second refresh) ───────────────
