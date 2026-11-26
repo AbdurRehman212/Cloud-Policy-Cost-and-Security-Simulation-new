@@ -87,7 +87,6 @@ jobs:
       SECRET_KEY: ci-secret
       JWT_SECRET_KEY: ci-jwt-secret
       FLASK_ENV: development
-      PORT: '5000'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -109,12 +108,14 @@ jobs:
         working-directory: frontend
       - run: npm ci
         working-directory: e2e
+      # PORT is set per step: Create React App also reads PORT, so a job-level value made the dev
+      # server take the backend's port.
       - name: Start backend (CI database only)
         working-directory: backend
-        run: nohup python run.py > ../backend-e2e.log 2>&1 &
+        run: PORT=5000 nohup python run.py > ../backend-e2e.log 2>&1 &
       - name: Start frontend dev server
         working-directory: frontend
-        run: BROWSER=none nohup npm start > ../frontend-e2e.log 2>&1 &
+        run: PORT=3000 BROWSER=none nohup npm start > ../frontend-e2e.log 2>&1 &
       - name: Wait for both servers
         run: |
           curl -s -o /dev/null --retry 60 --retry-connrefused --retry-delay 2 http://localhost:5000/api/settings
