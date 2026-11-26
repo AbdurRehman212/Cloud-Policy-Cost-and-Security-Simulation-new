@@ -119,12 +119,12 @@ const Membership = () => {
         ) : null}
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
         {plans.map((plan) => {
           const PlanIcon = plan.icon || iconByPlanId[plan.id] || SparklesIcon;
 
           return (
-            <div key={plan.id || plan.name} className="card flex flex-col h-full">
+            <div key={plan.id || plan.name} className="card flex flex-col h-full min-w-0">
               <div className="flex items-start justify-between gap-4">
                 <div>
                   <div className="w-12 h-12 rounded-2xl bg-primary-50 dark:bg-primary-900/20 text-primary-600 dark:text-primary-400 flex items-center justify-center mb-4">
@@ -133,7 +133,7 @@ const Membership = () => {
                   <h2 className="text-xl font-semibold text-gray-900 dark:text-white">{plan.name}</h2>
                   <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">{plan.price}</p>
                 </div>
-                <span className="px-3 py-1 rounded-full text-xs font-semibold bg-primary-100 text-primary-700 dark:bg-primary-900/30 dark:text-primary-300">
+                <span className="shrink-0 whitespace-nowrap px-3 py-1 rounded-full text-xs font-semibold bg-primary-100 text-primary-700 dark:bg-primary-900/30 dark:text-primary-300">
                   {plan.badge}
                 </span>
               </div>
