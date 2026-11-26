@@ -7,6 +7,7 @@ resources and is limited to admins and owners (UC10 actor: Administrator).
 
 from flask import Blueprint, jsonify, request
 from flask_jwt_extended import get_jwt_identity, jwt_required
+from app.utils.identity import get_jwt_identity  # int identity; tokens carry it as a string
 
 from app.services import remediation_service as svc
 from app.services.audit_service import record_audit_safely

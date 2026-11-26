@@ -93,6 +93,7 @@ def get_org_analytics(org_id):
 
     # Only accessible by organization admins/owners
     from flask_jwt_extended import get_jwt_identity
+    from app.utils.identity import get_jwt_identity  # int identity; tokens carry it as a string
     user_id = get_jwt_identity()
     member = OrganizationMember.query.filter_by(organization_id=org_id, user_id=user_id).first()
     if not member or member.role not in ['admin', 'owner']:

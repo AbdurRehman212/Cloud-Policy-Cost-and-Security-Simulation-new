@@ -59,6 +59,11 @@ def create_app(config_name='default'):
     migrate.init_app(app, db)
     jwt.init_app(app)
 
+    @jwt.user_identity_loader
+    def _identity_as_string(identity):
+        # RFC 7519 / PyJWT >= 2.10: "sub" must be a string. Read back with app.utils.identity.
+        return str(identity)
+
     @jwt.token_in_blocklist_loader
     def _token_revoked(_jwt_header, jwt_payload):
         from app.models.user import TokenBlacklist

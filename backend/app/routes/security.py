@@ -1,5 +1,6 @@
 from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required, get_jwt_identity
+from app.utils.identity import get_jwt_identity  # int identity; tokens carry it as a string
 from app import db, socketio
 from app.utils.rbac import active_membership
 from app.models.security import AlertRule, SecurityLog, ThreatDetection, RemediationAction, ThreatType, ThreatSeverity

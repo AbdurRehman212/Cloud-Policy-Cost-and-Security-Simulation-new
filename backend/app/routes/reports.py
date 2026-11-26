@@ -6,6 +6,7 @@ from xml.sax.saxutils import escape
 
 from flask import Blueprint, jsonify, request, send_file
 from flask_jwt_extended import get_jwt_identity, jwt_required
+from app.utils.identity import get_jwt_identity  # int identity; tokens carry it as a string
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import letter
 from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle

@@ -4,6 +4,7 @@ from datetime import datetime, timedelta
 import pandas as pd
 from flask import Blueprint, jsonify, request
 from flask_jwt_extended import jwt_required, get_jwt_identity
+from app.utils.identity import get_jwt_identity  # int identity; tokens carry it as a string
 
 from app import db
 from app.utils.rbac import active_membership
@@ -134,7 +135,7 @@ def fallback_forecast(df, days_ahead):
         recent_average = float(df['total_cost'].tail(min(len(df), 7)).mean())
         if pd.isna(recent_average):
             recent_average = 0.0
-    start_date = datetime.now().date()
+    start_date = datetime.utcnow().date()  # cost records use UTC dates
     forecast = []
     for offset in range(1, days_ahead + 1):
         predicted = round(recent_average, 2)

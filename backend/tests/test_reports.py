@@ -10,6 +10,10 @@ from app.models.security import SecurityLog, ThreatDetection, ThreatSeverity, Th
 from app.routes import reports
 from tests.conftest import make_vm
 
+
+def utc_today():  # the app stores and queries cost dates in UTC
+    return datetime.utcnow().date()
+
 R = '/api/reports'
 
 
@@ -63,7 +67,7 @@ def test_pdfs_are_valid_and_scoped(client, world, name):  # TC-M9-01..03, TC-M9-
 
 
 def test_cost_csv_filters_and_isolation(client, world):  # TC-M9-04, TC-M9-06
-    today = date.today()
+    today = utc_today()
     add_cost(world['org_a'], today, 3.0, 'i-new')
     add_cost(world['org_a'], today - timedelta(days=20), 4.0, 'i-old')
     add_cost(world['org_b'], today, 99.0, 'i-other-tenant')
@@ -109,7 +113,7 @@ def test_security_csv_and_summary(client, world, captured):  # TC-M9-05, TC-M9-0
 
 
 def test_cost_pdf_content(client, world, captured):  # TC-M9-06
-    add_cost(world['org_a'], date.today(), 12.5, 'i-a')
+    add_cost(world['org_a'], utc_today(), 12.5, 'i-a')
     client.get(f"{R}/cost.pdf?organization_id={world['org_a']}", headers=world['viewer'])
     text = flat(captured['sections'])
     assert 'Lifetime spend | $12.50' in text and 'i-a' in text

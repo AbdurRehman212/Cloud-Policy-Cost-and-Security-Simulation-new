@@ -1,5 +1,6 @@
 from flask import Blueprint, request, jsonify, current_app
 from flask_jwt_extended import jwt_required, get_jwt_identity
+from app.utils.identity import get_jwt_identity  # int identity; tokens carry it as a string
 from app import db
 from app.models.organization import Organization, OrganizationMember, Invitation, ensure_default_organization_membership
 from app.models.user import User
@@ -317,7 +318,7 @@ def get_quotas(org_id):
     ).count()
     budget_used = db.session.query(func.sum(CostRecord.total_cost)).filter(
         CostRecord.organization_id == org_id,
-        CostRecord.date >= date(date.today().year, date.today().month, 1),
+        CostRecord.date >= datetime.utcnow().date().replace(day=1),  # UTC, like the cost records
     ).scalar() or 0.0
     return _success({
         'vms': {'used': vms_used, 'limit': resource_limit},

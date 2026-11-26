@@ -1,5 +1,6 @@
 from flask import Blueprint, jsonify, request
 from flask_jwt_extended import get_jwt_identity, jwt_required
+from app.utils.identity import get_jwt_identity  # int identity; tokens carry it as a string
 
 from app import db
 from app.data.learning_content import LEARNING_CONTENT
