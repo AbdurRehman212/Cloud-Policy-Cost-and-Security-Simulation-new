@@ -84,12 +84,14 @@ test('tour preference is stored per user, not per browser', async ({ page, reque
   await login(page, first);
   await page.getByTestId('tour-skip-welcome').click();
   await page.getByRole('button', { name: 'Log out' }).click();
+  await expect(page).toHaveURL(/\/login/);
 
   await login(page, second);
   await expect(page.getByTestId('tour-start')).toBeVisible(); // second user still gets the offer
   await page.getByTestId('tour-skip-welcome').click();
 
   await page.getByRole('button', { name: 'Log out' }).click();
+  await expect(page).toHaveURL(/\/login/);
   await login(page, first);
   await expect(page.getByTestId('tour-start')).toHaveCount(0); // first user's dismissal remembered
 });

@@ -62,6 +62,11 @@ export const logoutUser = createAsyncThunk(
   async (_, { getState, rejectWithValue }) => {
     try {
       const { refreshToken, token } = getState().auth;
+      // Sign out locally first: a reload or tab close during the revoke request must not leave the
+      // tokens behind. The server-side revocation below is best effort.
+      localStorage.removeItem('token');
+      localStorage.removeItem('refresh_token');
+      localStorage.removeItem('activeOrg');
       if (refreshToken) {
         // Revoke both tokens server-side (the access token would otherwise stay valid for up to 1 h).
         await axios.delete(`${API_URL}/auth/logout`, {

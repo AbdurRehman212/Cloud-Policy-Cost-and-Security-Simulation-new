@@ -203,7 +203,7 @@ const Header = ({ onMenuClick = () => {} }) => {
         </div>
 
         <div className="flex items-center gap-2 sm:gap-4 shrink-0">
-          <div className="hidden lg:block"><UserProgressBar /></div>
+          <div className="hidden xl:block"><UserProgressBar /></div>
           <AlertBell />
           <button
             type="button"
