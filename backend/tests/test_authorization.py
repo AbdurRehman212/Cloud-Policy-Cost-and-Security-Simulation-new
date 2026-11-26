@@ -121,3 +121,21 @@ def test_deleted_organization_grants_no_access(client, world):
     assert org not in [o['id'] for o in listed]
     assert client.get(f'/api/resources?organization_id={org}', headers=world['owner']).status_code == 403
     assert client.post('/api/resources/vm', json={'organization_id': org, 'name': 'zombie'}, headers=world['owner']).status_code == 403
+
+
+def test_member_role_matrix_across_modules(client, world):  # member: operate resources, not govern
+    org, member = world['org_a'], world['member']
+    # allowed: create resources, run compliance checks and threat analysis, read everything
+    assert client.post('/api/resources/vm', json={'organization_id': org, 'name': 'member-vm'}, headers=member).status_code in (200, 201)
+    assert client.post('/api/governance/compliance/check', json={'organization_id': org}, headers=member).status_code == 200
+    assert client.get(f'/api/remediation/issues?organization_id={org}', headers=member).status_code == 200
+    assert client.get(f'/api/audit/events?organization_id={org}', headers=member).get_json()['data']['scope'] == 'own_actions'
+    # refused: governance, budgets, members, attack simulation, remediation execution
+    assert client.post('/api/governance/policies', json={'organization_id': org, 'name': 'p', 'policy_rule': 'resource_type=vm;tag=env'},
+                       headers=member).status_code == 403
+    assert client.post('/api/cost/budgets', json={'organization_id': org, 'name': 'B', 'amount': 10, 'start_date': '2026-10-01'},
+                       headers=member).status_code == 403
+    assert client.post(f'{ORG}/{org}/invite', json={'email': 'm@t.io', 'role': 'viewer'}, headers=member).status_code == 403
+    assert client.post('/api/security/simulate-attack', json={'organization_id': org, 'attack_type': 'ddos'}, headers=member).status_code == 403
+    assert client.post('/api/remediation/execute', json={'organization_id': org, 'issue_key': 'threat:1', 'actions': ['request_review']},
+                       headers=member).status_code == 403

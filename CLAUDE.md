@@ -77,7 +77,8 @@ User (account) → OrganizationMember (role-based) → Organization (tenant)
 ### Governance Entities
 - **Policy** - Governance policies (naming, tagging, security, cost, compliance)
 - **ComplianceCheck** - Policy enforcement results
-- **AuditLog** - Immutable audit trail for all actions
+- **AuditLog** - Append-only audit trail (category, outcome; org NULL for account events)
+- **RemediationAction** - Remediation proposals/executions per issue (threat, violation, idle)
 
 ### Cost Entities
 - **CostRecord** - Time-series cost tracking
@@ -136,6 +137,20 @@ User (account) → OrganizationMember (role-based) → Organization (tenant)
 - `GET /api/governance/policies` - List policies
 - `POST /api/governance/policies` - Create policy
 - `GET /api/governance/compliance` - Compliance status
+
+### Remediation (Module 10)
+- `GET /api/remediation/issues` - Open threats, policy violations, idle VMs
+- `POST /api/remediation/plan` - Explainable recommendations with before/after preview
+- `POST /api/remediation/execute` - Admin/owner, explicit approval; verified, audited
+- `GET /api/remediation/history` - Executed/failed/review actions
+
+### Audit Trail (Module 11)
+- `GET /api/audit/events` - Org timeline (admins: all; others: own actions), filters + paging
+- `GET /api/audit/me` - Caller's own events incl. account-level events
+- Audit rows are written only via `services/audit_service.record_audit`; never edited
+
+### Settings (Module 12)
+- `GET/PUT /api/settings`, `POST /api/settings/reset`, `GET /api/settings/alerts`
 
 ### Learning
 - `GET /api/learning/scenarios` - List available scenarios
