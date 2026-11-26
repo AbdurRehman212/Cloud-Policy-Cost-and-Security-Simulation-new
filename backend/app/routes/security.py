@@ -124,64 +124,9 @@ def resolve_threat_type(threat_name):
 
 
 def build_attack_scenario(attack_type, intensity='medium'):
-    """Build a realistic attack scenario without fabricating a training dataset."""
-    attack_type = (attack_type or 'ddos').strip().lower()
-    intensity = (intensity or 'medium').strip().lower()
-
-    if attack_type == 'brute_force':
-        base = {
-            'requests_per_minute': 1100,
-            'avg_latency_ms': 180,
-            'error_rate': 0.09,
-            'bytes_in': 420000,
-            'bytes_out': 760000,
-            'active_connections': 120,
-            'auth_failures': 18,
-        }
-        increments = [
-            {'requests_per_minute': 0, 'avg_latency_ms': 0, 'error_rate': 0.0, 'auth_failures': 0},
-            {'requests_per_minute': 180, 'avg_latency_ms': 20, 'error_rate': 0.01, 'auth_failures': 6},
-            {'requests_per_minute': 320, 'avg_latency_ms': 35, 'error_rate': 0.015, 'auth_failures': 10},
-        ]
-    elif attack_type == 'port_scan':
-        base = {
-            'requests_per_minute': 2200,
-            'avg_latency_ms': 95,
-            'error_rate': 0.04,
-            'bytes_in': 760000,
-            'bytes_out': 1220000,
-            'active_connections': 210,
-            'auth_failures': 2,
-        }
-        increments = [
-            {'requests_per_minute': 0, 'avg_latency_ms': 0, 'error_rate': 0.0, 'auth_failures': 0},
-            {'requests_per_minute': 250, 'avg_latency_ms': 10, 'error_rate': 0.005, 'auth_failures': 1},
-            {'requests_per_minute': 420, 'avg_latency_ms': 15, 'error_rate': 0.008, 'auth_failures': 2},
-        ]
-    else:
-        scale = {'low': 1.0, 'medium': 1.5, 'high': 2.2}.get(intensity, 1.5)
-        base = {
-            'requests_per_minute': int(4200 * scale),
-            'avg_latency_ms': int(240 * scale),
-            'error_rate': round(0.12 * scale, 4),
-            'bytes_in': int(2_400_000 * scale),
-            'bytes_out': int(6_500_000 * scale),
-            'active_connections': int(180 * scale),
-            'auth_failures': 4,
-        }
-        increments = [
-            {'requests_per_minute': 0, 'avg_latency_ms': 0, 'error_rate': 0.0, 'auth_failures': 0},
-            {'requests_per_minute': 900, 'avg_latency_ms': 40, 'error_rate': 0.01, 'auth_failures': 1},
-            {'requests_per_minute': 1700, 'avg_latency_ms': 70, 'error_rate': 0.02, 'auth_failures': 2},
-        ]
-
-    scenario = []
-    for step in increments:
-        snapshot = base.copy()
-        for key, value in step.items():
-            snapshot[key] = snapshot.get(key, 0) + value
-        scenario.append(snapshot)
-    return scenario
+    """Attack rows for Simulate Attack (all ten model features; see ai_models/simulator_dataset.py)."""
+    from app.ai_models.simulator_dataset import build_attack_scenario as _build
+    return _build(attack_type, intensity)
 
 
 @security_bp.route('/alert-rules', methods=['GET'])
@@ -536,17 +481,23 @@ def simulate_attack():
         else:
             pred = basic_threat_analysis(row)
         predictions.append(pred)
-    # Create threat record
+    # Model agreement: mean confidence over the scenario rows the detector assigned to the injected
+    # type (rows it got wrong count as 0). A weak score sends remediation to human review.
+    agreement = (
+        sum(p.get('confidence', 0) for p in predictions if p.get('threat_type') == attack_type) / len(predictions)
+        if predictions else 0.0
+    )
+    model_version = (threat_detector.version if threat_detector else 'heuristic')[:20]
     threat = ThreatDetection(
         organization_id=org_id,
         threat_type=resolve_threat_type(attack_type),
-        severity=ThreatSeverity.HIGH,
-        confidence_score=0.95,
+        severity=ThreatSeverity.HIGH if agreement >= 0.8 else ThreatSeverity.MEDIUM,
+        confidence_score=round(float(agreement), 4),
         affected_resources=[target_resource] if target_resource else [],
         attack_vectors={'scenario': attack_scenario, 'attack_type': attack_type, 'simulation': True,
                         'source_ip': '198.51.100.201'},
         network_traffic_snapshot={'predictions': predictions[:5]},
-        model_version='simulation',
+        model_version=model_version,
         detection_pattern=f'Simulated {attack_type} scenario',
         # Injected scenarios are open until someone remediates them (Module 10); earlier builds
         # marked them "contained" although no containment action had run.

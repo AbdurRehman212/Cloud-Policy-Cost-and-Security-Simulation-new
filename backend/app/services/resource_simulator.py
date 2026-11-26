@@ -649,30 +649,8 @@ class ResourceSimulator:
         record.timestamp = moment
 
     def _build_vm_traffic_metrics(self, vm):
-        cpu = float(vm.cpu_utilization or 0)
-        memory = float(vm.memory_utilization or 0)
-        network_in = float(vm.network_in_mbps or 0)
-        network_out = float(vm.network_out_mbps or 0)
-        requests_per_minute = int(max(120, network_in * 14 + cpu * 24 + self._rng.uniform(0, 100)))
-        avg_latency_ms = round(max(15.0, 30 + cpu * 1.8 + network_out * 0.3 + self._rng.uniform(-4, 18)), 2)
-        error_rate = round(min(0.35, max(0.002, (cpu / 100.0) * 0.05 + self._rng.uniform(0.0, 0.01))), 4)
-        auth_failures = int(max(0, (cpu - 70) / 5 + self._rng.uniform(0, 4))) if cpu > 70 else int(self._rng.uniform(0, 2))
-
-        return {
-            'requests_per_minute': requests_per_minute,
-            'avg_latency_ms': avg_latency_ms,
-            'error_rate': error_rate,
-            'bytes_in': int(network_in * 125000),
-            'bytes_out': int(network_out * 125000),
-            'active_connections': int(max(1, network_in / 2 + cpu * 0.8)),
-            'cpu_utilization': cpu,
-            'memory_utilization': memory,
-            'disk_read_iops': float(vm.disk_read_iops or 0),
-            'disk_write_iops': float(vm.disk_write_iops or 0),
-            'network_in_mbps': network_in,
-            'network_out_mbps': network_out,
-            'auth_failures': auth_failures,
-        }
+        from app.ai_models.simulator_dataset import vm_traffic_metrics
+        return vm_traffic_metrics(vm, self._rng)
 
     def _map_threat_type(self, label):
         normalized = (label or '').lower()

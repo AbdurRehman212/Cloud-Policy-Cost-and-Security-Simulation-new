@@ -39,6 +39,7 @@ from app.models.security import RemediationAction, SecurityLog, ThreatDetection
 from app.services.audit_service import record_audit, record_audit_safely
 
 OPEN_THREAT_STATUSES = ('active', 'contained', 'under_review')
+THREAT_TITLES = {'ddos': 'DDoS', 'sql_injection': 'SQL injection', 'xss': 'XSS'}
 QUARANTINE_GROUP = 'remediation-quarantine'
 BLOCKLIST_GROUP = 'remediation-blocklist'
 # Rule-changing actions run before isolation so a block rule lands on the original groups.
@@ -172,7 +173,7 @@ def _threat_issue(threat):
     affected = threat.affected_resources or []
     return {
         'key': f'threat:{threat.id}', 'type': 'threat', 'id': threat.id,
-        'title': f'{threat.threat_type.value.replace("_", " ").title()} threat',
+        'title': f'{THREAT_TITLES.get(threat.threat_type.value, threat.threat_type.value.replace("_", " ").title())} threat',
         'severity': threat.severity.value if threat.severity else 'medium',
         'confidence': round(float(threat.confidence_score or 0), 4),
         'status': threat.status, 'detected_at': threat.detected_at.isoformat() if threat.detected_at else None,

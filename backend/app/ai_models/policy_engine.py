@@ -22,6 +22,15 @@ class PolicyEngine:
             return {'success': False, 'error': 'Policy rule is required'}
 
         compiled = self._compile_explicit_rule(rule_text)
+        if compiled.get('unknown_keys'):
+            # A key=value rule with an unsupported key used to be ignored silently, producing a policy
+            # that checks nothing (found by the Module 10-12 end-to-end test).
+            return {
+                'success': False,
+                'error': 'Unsupported rule key(s): ' + ', '.join(compiled['unknown_keys']) +
+                         '. Supported: resource_type, encryption, public_access, tag, max_cpu, max_memory, '
+                         'max_network, name_prefix, name_regex, severity, policy_type.',
+            }
         if not compiled['fields']:
             compiled = self._compile_natural_language_rule(rule_text)
         if not compiled['fields']:
@@ -46,6 +55,7 @@ class PolicyEngine:
         fields = {}
         required_tags = []
         matched_any = False
+        unknown_keys = []
 
         for token in tokens:
             if '=' not in token:
@@ -66,8 +76,8 @@ class PolicyEngine:
                 if ':' in normalized_value:
                     tag_key, tag_value = [part.strip() for part in normalized_value.split(':', 1)]
                     required_tags.append({'key': tag_key, 'value': tag_value})
-                else:
-                    required_tags.append({'key': normalized_value, 'value': normalized_value})
+                else:  # tag=owner → the tag must exist, any value
+                    required_tags.append({'key': normalized_value, 'value': ''})
             elif normalized_key in {'max_cpu', 'cpu'}:
                 fields['max_cpu'] = self._to_float(normalized_value)
             elif normalized_key in {'max_memory', 'memory'}:
@@ -84,9 +94,14 @@ class PolicyEngine:
                 fields['severity'] = normalized_value.lower()
             elif normalized_key in {'policy_type', 'type_hint'}:
                 fields['type'] = normalized_value.lower()
+            else:
+                unknown_keys.append(key)
 
         if required_tags:
             fields['required_tags'] = required_tags
+
+        if unknown_keys:
+            return {'expression': rule_text, 'fields': {}, 'unknown_keys': unknown_keys}
 
         if not matched_any and not required_tags:
             return {

@@ -463,6 +463,7 @@ def _vm_to_envelope(vm: VirtualMachine) -> dict:
         'id': vm.id,
         'name': vm.name,
         'type': 'vm',
+        'instance_id': vm.instance_id,
         'instance_type': vm.instance_type,
         'engine': None,
         'cpu': cpu_norm,

@@ -108,7 +108,7 @@ def test_cross_module_events_are_recorded(client, world):
                                            'period': 'monthly', 'start_date': '2026-11-01'}, headers=world['owner'])
     # M7 policy
     client.post('/api/governance/policies', json={'organization_id': org, 'name': 'Tags',
-                                                  'policy_rule': 'resource_type=vm;required_tags=env'}, headers=world['owner'])
+                                                  'policy_rule': 'resource_type=vm;tag=env'}, headers=world['owner'])
     # M6 security
     client.post('/api/security/simulate-attack', json={'organization_id': org, 'attack_type': 'ddos'}, headers=world['owner'])
     # M9 report
