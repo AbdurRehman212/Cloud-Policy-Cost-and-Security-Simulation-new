@@ -52,6 +52,9 @@ frontend/build/
 node_modules/
 build/
 package-lock.json
+# lockfiles CI installs from must be versioned
+!frontend/package-lock.json
+!e2e/package-lock.json
 *.tsbuildinfo
 .vite/
 .parcel-cache/
