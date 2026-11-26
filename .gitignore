@@ -1,6 +1,8 @@
 # ── Environment & secrets ──────────────────────────────────────────────────────
 .env
 .env.*
+!.env.example
+!backend/.env.example
 backend/.env
 frontend/.env
 .superpowers/
@@ -73,3 +75,8 @@ clear_resources.py
 # ── OS ──────────────────────────────────────────────────────────────────────────
 .DS_Store
 Thumbs.db
+
+# ── Local run artefacts and university documents (not source) ───────────────────
+logs/
+/*.pdf
+/*.docx
