@@ -34,29 +34,31 @@ def _err(message, status=400):
 
 
 def _parse_date(value, end=False):
+    """(datetime or None, error message or None)."""
     if not value:
-        return None
+        return None, None
     try:
         parsed = datetime.fromisoformat(str(value).replace('Z', '+00:00')).replace(tzinfo=None)
     except ValueError:
-        raise ValueError(f'Invalid date: {value} (use YYYY-MM-DD)')
+        return None, 'Invalid date (use YYYY-MM-DD)'
     if end and len(str(value)) <= 10:  # a bare date means "through the end of that day"
         parsed += timedelta(days=1)
-    return parsed
+    return parsed, None
 
 
 def _apply_filters(query, args):
+    """(filtered query, error message or None); errors are fixed strings, never exception text."""
     category = (args.get('category') or '').strip().lower()
     if category:
         if category not in CATEGORIES and category != 'other':
-            raise ValueError('Unknown category')
+            return query, 'Unknown category'
         legacy = [AuditLog.action.like(f'{prefix}%') for prefix in actions_for_category(category)]
         query = query.filter(or_(AuditLog.category == category,
                                  db.and_(AuditLog.category.is_(None), or_(*legacy)) if legacy else db.false()))
     outcome = (args.get('outcome') or '').strip().lower()
     if outcome:
         if outcome not in ('success', 'failure', 'denied'):
-            raise ValueError('Unknown outcome')
+            return query, 'Unknown outcome'
         query = query.filter(AuditLog.outcome == outcome) if outcome != 'success' else query.filter(
             or_(AuditLog.outcome == 'success', AuditLog.outcome.is_(None)))
     action = (args.get('action') or '').strip()
@@ -70,15 +72,19 @@ def _apply_filters(query, args):
     user_filter = args.get('user_id', type=int)
     if user_filter:
         query = query.filter(AuditLog.user_id == user_filter)
-    date_from = _parse_date(args.get('date_from'))
-    date_to = _parse_date(args.get('date_to'), end=True)
+    date_from, error = _parse_date(args.get('date_from'))
+    if error:
+        return query, error
+    date_to, error = _parse_date(args.get('date_to'), end=True)
+    if error:
+        return query, error
     if date_from and date_to and date_from > date_to:
-        raise ValueError('date_from must be before date_to')
+        return query, 'date_from must be before date_to'
     if date_from:
         query = query.filter(AuditLog.timestamp >= date_from)
     if date_to:
         query = query.filter(AuditLog.timestamp < date_to)
-    return query
+    return query, None
 
 
 def _page(query):
@@ -116,10 +122,9 @@ def list_events():
     query, full_access, error = _org_scope()
     if error:
         return error
-    try:
-        query = _apply_filters(query, request.args)
-    except ValueError as exc:
-        return _err(str(exc))
+    query, error = _apply_filters(query, request.args)
+    if error:
+        return _err(error)
     data = _page(query)
     data['scope'] = 'organization' if full_access else 'own_actions'
     data['categories'] = list(CATEGORIES)
@@ -164,10 +169,9 @@ def summary():
 def my_events():
     user_id = int(get_jwt_identity())
     query = AuditLog.query.filter(AuditLog.user_id == user_id)
-    try:
-        query = _apply_filters(query, request.args)
-    except ValueError as exc:
-        return _err(str(exc))
+    query, error = _apply_filters(query, request.args)
+    if error:
+        return _err(error)
     data = _page(query)
     data['scope'] = 'own_account'
     return _ok(data)

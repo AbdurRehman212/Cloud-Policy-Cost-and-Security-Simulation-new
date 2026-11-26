@@ -79,9 +79,10 @@ def reset_system():
 
         return jsonify({'status': 'success', 'message': 'System safely reset to 1 VM.'}), 200
 
-    except Exception as e:
+    except Exception:
         db.session.rollback()
-        return jsonify({'status': 'error', 'error': {'message': str(e)}}), 500
+        current_app.logger.exception('system reset failed')
+        return jsonify({'status': 'error', 'error': {'message': 'System reset failed.'}}), 500
 
 @admin_bp.route('/analytics/organization/<int:org_id>', methods=['GET'])
 @jwt_required()

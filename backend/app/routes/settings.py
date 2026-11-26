@@ -14,7 +14,7 @@ JWT, never from the request. The default organization must be one the user belon
 from copy import deepcopy
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, g, jsonify, request
 from flask_jwt_extended import get_jwt_identity, jwt_required
 from app.utils.identity import get_jwt_identity  # int identity; tokens carry it as a string
 
@@ -47,7 +47,11 @@ DEFAULTS = {
 
 
 class SettingsError(ValueError):
-    pass
+    """Raised by validators after they record a fixed, user-facing message in ``g``."""
+
+    def __init__(self, message):
+        g.settings_error = message  # read by the route; exception text never reaches a response
+        super().__init__('invalid settings')
 
 
 def _success(data, status_code=200):
@@ -305,9 +309,9 @@ def update_settings():
         return _error('User not found', status_code=404)
     try:
         changes = _plan_changes(user.id, request.get_json(silent=True))
-    except SettingsError as exc:
+    except SettingsError:
         db.session.rollback()
-        return _error(str(exc))
+        return _error(g.get('settings_error', 'Invalid settings'))
     settings, notifications = _get_or_create(user.id)
     old, new = _apply(user, settings, notifications, changes)
     if new:

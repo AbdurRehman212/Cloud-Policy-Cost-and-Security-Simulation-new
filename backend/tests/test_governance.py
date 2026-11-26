@@ -87,3 +87,10 @@ def test_bare_tag_rule_requires_the_tag_with_any_value():
     tagged = {'resource_kind': 'vm', 'tags': [{'key': 'owner', 'value': 'team-a'}]}
     assert policy_engine.evaluate_resource(rule, untagged)['violations'] == ['Required tag missing: owner']
     assert policy_engine.evaluate_resource(rule, tagged)['compliant'] is True
+
+
+def test_policy_text_is_length_bounded_and_name_rule_still_parses():
+    from app.ai_models.policy_engine import policy_engine
+    assert policy_engine.parse_policy('x=' + 'a' * 600)['success'] is False
+    parsed = policy_engine.parse_policy('VM names must match ^web-')
+    assert parsed['success'] and parsed['parsed_rule']['fields']['required_name_regex'] == '^web-'

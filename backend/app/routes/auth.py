@@ -144,9 +144,10 @@ def register():
             'user': user.to_dict(),
         }
         return _success(payload, status_code=201)
-    except Exception as e:
+    except Exception:
         db.session.rollback()
-        return _error(f'Registration failed: {e}', status_code=500)
+        current_app.logger.exception('registration failed')
+        return _error('Registration failed. Please try again.', status_code=500)
 def send_verification_email(email, token):
     """Send email verification."""
     try:

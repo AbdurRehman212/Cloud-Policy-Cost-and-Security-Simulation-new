@@ -5,6 +5,9 @@ from __future__ import annotations
 import re
 
 
+
+MAX_RULE_LENGTH = 500  # bounds regex work on user-written policy text
+
 class PolicyEngine:
     """Compile explicit policy rules into executable simulation rules.
 
@@ -20,6 +23,8 @@ class PolicyEngine:
         rule_text = (policy_rule or '').strip()
         if not rule_text:
             return {'success': False, 'error': 'Policy rule is required'}
+        if len(rule_text) > MAX_RULE_LENGTH:
+            return {'success': False, 'error': f'Policy rule must be at most {MAX_RULE_LENGTH} characters'}
 
         compiled = self._compile_explicit_rule(rule_text)
         if compiled.get('unknown_keys'):
@@ -171,7 +176,7 @@ class PolicyEngine:
             fields.setdefault('type', 'naming')
 
         regex_match = re.search(
-            r'\bname(?:s)?\s+must\s+match\s+(?P<pattern>.+)$',
+            r'\bnames?\s+must\s+match\s+(?P<pattern>\S.*)$',
             lowered,
         )
         if regex_match:
