@@ -19,7 +19,8 @@ def _error(message, status_code=400):
 
 
 def _frontend_url(path):
-    base_url = current_app.config.get('FRONTEND_BASE_URL') or request.host_url.rstrip('/')
+    # Configured, never from the Host header (an attacker could redirect invitation links).
+    base_url = current_app.config['FRONTEND_BASE_URL'].rstrip('/')
     return f"{base_url}{path}" if base_url else path
 def _may_assign(actor_role, current_role, new_role):
     """Role-assignment rule (deny by default).
