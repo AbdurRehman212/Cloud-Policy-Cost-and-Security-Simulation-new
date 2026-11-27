@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
+import { safeRedirect } from '../../utils/safeRedirect';
 import { useDispatch, useSelector } from 'react-redux';
 import { login, clearError } from '../../store/slices/authSlice';
 import toast from 'react-hot-toast';
@@ -9,7 +10,7 @@ const Login = () => {
   const [searchParams] = useSearchParams();
   const { loading, error, isAuthenticated } = useSelector((state) => state.auth);
   const submitLockRef = useRef(false);
-  const redirectTarget = searchParams.get('redirect') || '/';
+  const redirectTarget = safeRedirect(searchParams.get('redirect'));
   const [formData, setFormData] = useState({
     email: '',
     password: '',
