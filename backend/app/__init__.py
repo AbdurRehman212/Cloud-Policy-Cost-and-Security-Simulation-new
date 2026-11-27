@@ -1,4 +1,4 @@
-from flask import Flask
+from flask import request, Flask
 from flask import jsonify
 from flask_sqlalchemy import SQLAlchemy
 from flask_migrate import Migrate
@@ -50,10 +50,12 @@ def _json_error(message, status_code=500, code='internal_error'):
     }), status_code
 
 
-def create_app(config_name='default'):
+def create_app(config_name='default'):  # noqa: C901
     """Application factory pattern."""
     app = Flask(__name__)
     app.config.from_object(config[config_name])
+    if hasattr(config[config_name], 'validate'):
+        config[config_name].validate()  # refuses placeholder secrets in production
     # Initialize extensions with app
     db.init_app(app)
     migrate.init_app(app, db)
@@ -66,13 +68,40 @@ def create_app(config_name='default'):
 
     @jwt.token_in_blocklist_loader
     def _token_revoked(_jwt_header, jwt_payload):
-        from app.models.user import TokenBlacklist
-        return TokenBlacklist.query.filter_by(jti=jwt_payload.get('jti')).first() is not None
+        from app.models.user import TokenBlacklist, User
+        if TokenBlacklist.query.filter_by(jti=jwt_payload.get('jti')).first() is not None:
+            return True  # logged out
+        # A password change or reset ends every session that started before it.
+        sub = str(jwt_payload.get('sub') or '')
+        user = db.session.get(User, int(sub)) if sub.isdigit() else None
+        if user is None:
+            return True  # deleted account
+        changed = user.password_changed_at
+        if not changed:
+            return False
+        from datetime import timezone
+        changed_epoch = int(changed.replace(tzinfo=timezone.utc).timestamp())  # stored as naive UTC
+        return jwt_payload.get('iat', 0) < changed_epoch
+
     mail.init_app(app)
-    socketio.init_app(app)
+    # Browsers may call the API and Socket.IO only from the configured front-end origins.
+    allowed_origins = app.config['CORS_ORIGINS']
+    socketio.init_app(app, cors_allowed_origins=allowed_origins)
     from app.services.resource_simulator import ResourceSimulator
     app.simulator = ResourceSimulator()
-    CORS(app, resources={r"/api/*": {"origins": "*"}})
+    CORS(app, resources={r"/api/*": {"origins": allowed_origins}})
+
+    @app.after_request
+    def _security_headers(response):
+        # OWASP Secure Headers for a JSON API (the React build is served separately).
+        response.headers.setdefault('X-Content-Type-Options', 'nosniff')
+        response.headers.setdefault('X-Frame-Options', 'DENY')
+        response.headers.setdefault('Referrer-Policy', 'no-referrer')
+        response.headers.setdefault('Content-Security-Policy', "default-src 'none'; frame-ancestors 'none'")
+        response.headers.setdefault('Permissions-Policy', 'camera=(), microphone=(), geolocation=()')
+        if request.path.startswith('/api/auth'):
+            response.headers['Cache-Control'] = 'no-store'
+        return response
     from app.utils.dataset_loader import load_dataset
 
     load_dataset()
@@ -132,9 +161,13 @@ def create_app(config_name='default'):
 
     # Create database tables
     with app.app_context():
-        db.create_all()
-        from app.utils.schema_upgrade import upgrade_schema
-        upgrade_schema(db)
+        if app.config.get('TESTING') or not app.config.get('MIGRATE_ON_START', True):
+            db.create_all()  # tests build the schema straight from the models
+            from app.utils.schema_upgrade import upgrade_schema
+            upgrade_schema(db)
+        else:
+            from app.utils.migrations import migrate_on_start
+            migrate_on_start(db)  # Alembic history in migrations/versions
 
         if not app.config.get('TESTING'):
             # ── Control-plane snapshot cache (2-second refresh) ───────────────

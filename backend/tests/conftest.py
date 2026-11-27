@@ -72,3 +72,11 @@ def make_vm(org_id, name, **kwargs):
     db.session.add(vm)
     db.session.commit()
     return vm
+
+
+@pytest.fixture(autouse=True)
+def _fresh_rate_limits():
+    """Rate limiting stays enabled in tests; each test starts with empty windows."""
+    from app.utils import rate_limit
+    rate_limit.reset_all()
+    yield

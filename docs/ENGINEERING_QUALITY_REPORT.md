@@ -176,3 +176,25 @@ scripted evaluation, so **nothing new was installed**.
 **Final evidence (GitHub Actions, commit 17ae2fc):** CI — backend 125 passed on PostgreSQL 16, frontend build (CI=true) passed,
 Playwright 29 passed, pip-audit "No known vulnerabilities found, 2 ignored" (the documented scikit-learn advisory), npm audit 0 critical;
 CodeQL Python and JavaScript succeeded with 0 open alerts; secret scanning 0 alerts.
+
+## 11. Final security hardening (branch `feature/final-security-hardening`)
+
+| Area | Finding | Action / evidence |
+|---|---|---|
+| Rate limiting (S10 rest) | register, forgot-password, reset and verify-email were unlimited | in-process limits (`app/utils/rate_limit.py`); `tests/test_auth_hardening.py` |
+| Enumeration | lockout answered only for existing accounts; timing differed | identical answer for unknown addresses; dummy hash check; background mail |
+| **Password-reset poisoning (H)** | reset and invitation links were built from the request `Host` header | links use `FRONTEND_BASE_URL`; `test_reset_link_ignores_a_forged_host_header` |
+| **Open redirect (M)** | Login/Register followed `?redirect=` unchecked (incl. `/\host`) | `frontend/src/utils/safeRedirect.js` (11 unit tests) + e2e `security.spec.js` |
+| Token confusion (M) | verification and reset tokens shared a table without purpose; reset tokens lived 24 h | purpose-bound tokens, reset 1 h, newest link only |
+| Sessions (S11 rest) | password change/reset did not end other sessions | `password_changed_at` vs token `iat` (UTC); change-password returns fresh tokens |
+| Password hashing | PBKDF2-SHA256, 100k iterations | scrypt for new hashes; upgrade at next login |
+| Headers / CORS / secrets | no security headers; CORS and Socket.IO `*`; placeholder secrets accepted | headers + no-store on auth; `CORS_ORIGINS`; production refuses placeholders |
+| Migrations | no usable Alembic history | `0001_baseline` + `0002_auth_hardening`, automatic adoption; `tests/test_migrations.py`; real-data copy: 12,209 rows, 0 schema differences |
+| Performance | control plane recomputed every organization every 2 s | active organizations only; dashboard p95 511 → 44 ms, throughput 9 → 15 req/s (`scripts/perf_test.py`) |
+| Dependencies | npm: 29 (0 critical, 13 high), all highs in react-scripts tooling; react-router open-redirect advisory | mitigated by redirect validation; no compatible fixes remain without replacing react-scripts. Python: 0 (scikit-learn exception re-verified: no text vectorizers, no persisted models) |
+| GitHub | no protection on main; Dependabot off | ruleset "Protect main" (PR + 6 required checks, no force-push/deletion); Dependabot alerts + security updates on |
+| Historical credential S12 | `abdur` role password in published history | role does not exist on this server (verified); rotate/drop wherever it exists; the current app password was displayed in a support chat and should be rotated by the owner |
+
+| Dependabot (enabled in this pass) | 100 open alerts: 70 from `backend/requirements-ai.txt` (nltk incl. 3 critical, keras), an "optional, later phases" manifest that nothing installs or imports; 1 in e2e tooling (Playwright browser download without TLS verification); the rest are react-scripts tooling | unused manifest removed; Playwright 1.55.0 -> 1.55.1 (patch); Dependabot's own PRs #4 (qs/express, dev server) and #5 (react-router 7, major) left for the owner to review |
+
+Tests at the end of this pass: 145 backend (PostgreSQL), 31 Playwright, frontend build, 11 frontend unit tests.

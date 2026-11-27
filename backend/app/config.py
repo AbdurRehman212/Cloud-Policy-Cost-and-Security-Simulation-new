@@ -38,6 +38,15 @@ class Config:
     # JWT Settings
     JWT_SECRET_KEY = os.environ.get('JWT_SECRET_KEY') or 'jwt-secret-change-in-production'
     JWT_ACCESS_TOKEN_EXPIRES = timedelta(hours=1)
+    # Front-end origins allowed to call the API and Socket.IO (comma-separated).
+    CORS_ORIGINS = [o.strip() for o in os.environ.get(
+        'CORS_ORIGINS', 'http://localhost:3000,http://127.0.0.1:3000').split(',') if o.strip()]
+    RATE_LIMIT_ENABLED = os.environ.get('RATE_LIMIT_ENABLED', 'true').lower() != 'false'
+    MIGRATE_ON_START = os.environ.get('MIGRATE_ON_START', 'true').lower() != 'false'
+    # Base URL used in e-mailed links (verification, password reset, invitations).
+    FRONTEND_BASE_URL = os.environ.get('FRONTEND_BASE_URL', 'http://localhost:3000')
+    # FR4: require e-mail verification at sign-in (only when mail delivery is configured).
+    EMAIL_VERIFICATION_REQUIRED = os.environ.get('EMAIL_VERIFICATION_REQUIRED', 'false').lower() == 'true'
     JWT_REFRESH_TOKEN_EXPIRES = timedelta(days=7)
     # Redis
     REDIS_URL = os.environ.get('REDIS_URL') or 'redis://localhost:6379/0'
@@ -89,6 +98,14 @@ class DevelopmentConfig(Config):
     DEBUG = True
     SQLALCHEMY_DATABASE_URI = os.environ.get('DEV_DATABASE_URL') or os.environ.get('DATABASE_URL') or PG_URL
 class ProductionConfig(Config):
+    @classmethod
+    def validate(cls):
+        weak = [k for k, default in (('SECRET_KEY', 'dev-secret-key-change-in-production'),
+                                     ('JWT_SECRET_KEY', 'jwt-secret-change-in-production'))
+                if os.environ.get(k) in (None, '', default)]
+        if weak:
+            raise RuntimeError('Production requires real values for: ' + ', '.join(weak))
+
     DEBUG = False
     SQLALCHEMY_DATABASE_URI = os.environ.get('DATABASE_URL') or PG_URL
 class TestingConfig(Config):

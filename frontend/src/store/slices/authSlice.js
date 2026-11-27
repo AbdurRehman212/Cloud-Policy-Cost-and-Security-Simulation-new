@@ -92,6 +92,13 @@ const authSlice = createSlice({
     error: null,
   },
   reducers: {
+    // After a password change the server ends older sessions and issues new tokens.
+    tokensRenewed: (state, action) => {
+      state.token = action.payload.access_token;
+      state.refreshToken = action.payload.refresh_token;
+      localStorage.setItem('token', action.payload.access_token);
+      localStorage.setItem('refresh_token', action.payload.refresh_token);
+    },
     logout: (state) => {
       state.user = null;
       state.token = null;
@@ -152,5 +159,5 @@ const authSlice = createSlice({
       });
   },
 });
-export const { logout, clearError } = authSlice.actions;
+export const { logout, clearError, tokensRenewed } = authSlice.actions;
 export default authSlice.reducer;

@@ -85,7 +85,7 @@ class AuditLog(db.Model):
     """
     __tablename__ = 'audit_logs'
     id = db.Column(db.Integer, primary_key=True)
-    organization_id = db.Column(db.Integer, db.ForeignKey('organizations.id'), nullable=True, index=True)
+    organization_id = db.Column(db.Integer, db.ForeignKey('organizations.id'), nullable=True)
     user_id = db.Column(db.Integer, db.ForeignKey('users.id'), index=True)
     action = db.Column(db.String(100), nullable=False)  # e.g. vm_created, login_succeeded
     category = db.Column(db.String(30), index=True)  # auth, organization, resource, security, ...
@@ -104,6 +104,9 @@ class AuditLog(db.Model):
     retention_until = db.Column(db.DateTime)
 
     actor = db.relationship('User', foreign_keys=[user_id], lazy='joined')
+    # The organization timeline is filtered by organization and ordered by time; this composite
+    # index also serves organization-only lookups (leftmost column).
+    __table_args__ = (db.Index('ix_audit_logs_org_ts', 'organization_id', 'timestamp'),)
 
     def to_dict(self):
         actor = self.actor

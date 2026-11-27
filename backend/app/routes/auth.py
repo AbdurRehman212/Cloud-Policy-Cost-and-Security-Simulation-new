@@ -8,32 +8,20 @@ from app.models.organization import ensure_default_organization_membership
 from flask_mail import Message
 from app.services.audit_service import record_audit, record_audit_safely
 from app.models.governance import AuditLog
-from collections import defaultdict, deque
 from datetime import datetime, timedelta
-from threading import Lock
 import re
+import threading
+from werkzeug.security import check_password_hash, generate_password_hash
+from app.utils import rate_limit
 auth_bp = Blueprint('auth', __name__)
 
-# Login throttling (OWASP ASVS V2.2). Per account: failed attempts are counted from the
-# persisted audit trail, so the limit survives restarts. Per client IP: a small in-memory
-# window also limits guessing across many e-mail addresses.
+# Throttling (OWASP ASVS V2.2): per account, failed logins are counted from the persisted audit
+# trail; per client IP and per submitted e-mail, app/utils/rate_limit.py keeps small windows. The
+# per-e-mail window also covers unknown addresses, so a lockout does not reveal whether an account
+# exists.
 LOGIN_MAX_FAILURES = 5
 LOGIN_WINDOW = timedelta(minutes=15)
-IP_MAX_ATTEMPTS = 50  # failed attempts per IP per window
-_ip_attempts = defaultdict(deque)
-_ip_lock = Lock()
-
-
-def _ip_throttled(ip, record_failure=False):
-    """True when this client IP has too many recent failed logins; optionally record one."""
-    now = datetime.utcnow()
-    with _ip_lock:
-        window = _ip_attempts[ip]
-        while window and now - window[0] > LOGIN_WINDOW:
-            window.popleft()
-        if record_failure:
-            window.append(now)
-        return len(window) >= IP_MAX_ATTEMPTS
+_DUMMY_HASH = generate_password_hash('timing-equaliser-not-a-real-password')
 
 
 def _account_locked(user):
@@ -47,7 +35,28 @@ def _account_locked(user):
     ).count()
     return failures >= LOGIN_MAX_FAILURES
 
-DEMO_EMAIL_VERIFICATION_BYPASS = True
+def _verification_required():
+    """FR4: e-mail verification is enforced when EMAIL_VERIFICATION_REQUIRED=true and mail is configured."""
+    return bool(current_app.config.get('EMAIL_VERIFICATION_REQUIRED')) and _mail_delivery_configured()
+
+
+def _too_many():
+    return _error('Too many requests. Please wait and try again.', status_code=429)
+
+
+def _send_mail_async(subject, recipient, body):
+    """Send in the background so response time does not reveal whether an account exists."""
+    app = current_app._get_current_object()
+    sender = app.config.get('MAIL_DEFAULT_SENDER')
+
+    def _send():
+        with app.app_context():
+            try:
+                mail.send(Message(subject, sender=sender, recipients=[recipient], body=body))
+            except Exception:
+                app.logger.exception('mail delivery failed')  # recipient address is not logged
+
+    threading.Thread(target=_send, daemon=True).start()
 
 
 def _success(data, status_code=200):
@@ -59,17 +68,17 @@ def _error(message, status_code=400):
 
 
 def _frontend_url(path):
-    base_url = current_app.config.get('FRONTEND_BASE_URL') or request.host_url.rstrip('/')
-    return f"{base_url}{path}" if base_url else path
+    # Never built from the request Host header: that would let an attacker send real reset tokens
+    # to a site they control (password-reset poisoning).
+    return f"{current_app.config['FRONTEND_BASE_URL'].rstrip('/')}{path}"
 
 
 def _mail_delivery_configured():
+    # Username/password are optional so a local relay (e.g. a test SMTP server) also counts.
     return bool(
         current_app.config.get('MAIL_SERVER')
         and current_app.config.get('MAIL_PORT')
         and current_app.config.get('MAIL_DEFAULT_SENDER')
-        and current_app.config.get('MAIL_USERNAME')
-        and current_app.config.get('MAIL_PASSWORD')
     )
 
 
@@ -91,6 +100,8 @@ def is_valid_password(password):
 @auth_bp.route('/register', methods=['POST'])
 def register():
     """Register new user."""
+    if rate_limit.hit('register_ip', rate_limit.client_ip()):
+        return _too_many()
     data = request.get_json() or {}
     # Validation
     required = ['email', 'password', 'first_name', 'last_name']
@@ -105,15 +116,16 @@ def register():
         return _error(msg, status_code=400)
     if User.query.filter_by(email=email).first():
         return _error('Email already registered', status_code=409)
+    verification_required = _verification_required()
     try:
         # Create user
         user = User(
             email=email,
             first_name=data['first_name'],
             last_name=data['last_name'],
-            # Email verification bypassed for demo; production uses external email service
-            is_active=DEMO_EMAIL_VERIFICATION_BYPASS,
-            email_verified=DEMO_EMAIL_VERIFICATION_BYPASS,
+            # Active immediately unless e-mail verification is switched on (see _verification_required).
+            is_active=not verification_required,
+            email_verified=not verification_required,
         )
         user.set_password(data['password'])
         db.session.add(user)
@@ -130,8 +142,8 @@ def register():
         record_audit('register_succeeded', org_id=None, user_id=user.id, resource_type='user', resource_id=user.id)
 
         verification = None
-        if not DEMO_EMAIL_VERIFICATION_BYPASS:
-            verification = EmailVerification.create_token(user.id)
+        if verification_required:
+            verification = EmailVerification.create_token(user.id, purpose='verify')
             db.session.add(verification)
 
         db.session.commit()
@@ -140,7 +152,7 @@ def register():
             send_verification_email(user.email, verification.token)
 
         payload = {
-            'message': 'Registration successful. You can now log in.' if DEMO_EMAIL_VERIFICATION_BYPASS else 'Registration successful. Please check your email to verify your account.',
+            'message': 'Registration successful. Please check your email to verify your account.' if verification_required else 'Registration successful. You can now log in.',
             'user': user.to_dict(),
         }
         return _success(payload, status_code=201)
@@ -149,28 +161,22 @@ def register():
         current_app.logger.exception('registration failed')
         return _error('Registration failed. Please try again.', status_code=500)
 def send_verification_email(email, token):
-    """Send email verification."""
-    try:
-        msg = Message(
-            'Verify Your Cloud Policy, Cost & Security Simulator Account',
-            recipients=[email]
-        )
-        verify_url = _frontend_url(f"/verify-email?token={token}")
-        msg.body = f"""
-        Welcome to Cloud Policy, Cost & Security Simulator!
-        Please verify your email by clicking: {verify_url}
-        This link expires in 24 hours.
-        """
-        mail.send(msg)
-    except Exception as e:
-        print(f"Failed to send email: {e}")
+    """Send the e-mail verification link (FR4)."""
+    verify_url = _frontend_url(f"/verify-email?token={token}")
+    _send_mail_async(
+        'Verify your Cloud Policy, Cost & Security Simulator account', email,
+        f"Welcome to the Cloud Policy, Cost & Security Simulator.\n\nVerify your e-mail address: {verify_url}\n"
+        "This link expires in 24 hours. If you did not register, ignore this message.",
+    )
 @auth_bp.route('/verify-email', methods=['GET'])
 def verify_email():
     """Verify email with token."""
+    if rate_limit.hit('verify_ip', rate_limit.client_ip()):
+        return _too_many()
     token = request.args.get('token')
     if not token:
         return _error('Token required', status_code=400)
-    verification = EmailVerification.query.filter_by(token=token, used=False).first()
+    verification = EmailVerification.query.filter_by(token=token, used=False, purpose='verify').first()
     if not verification:
         return _error('Invalid or used token', status_code=400)
     if verification.is_expired():
@@ -189,25 +195,36 @@ def login():
     password = data.get('password')
     if not email or not password:
         return _error('Email and password required', status_code=400)
-    if current_app.config.get('LOGIN_THROTTLE_ENABLED', True) and _ip_throttled(request.remote_addr or 'unknown'):
+    ip = rate_limit.client_ip()
+    if rate_limit.exceeded('login_fail_ip', ip):
         return _error('Too many login attempts. Try again later.', status_code=429)
     user = User.query.filter_by(email=email).first()
-    if user and _account_locked(user):
-        record_audit_safely('login_blocked', org_id=None, user_id=user.id, resource_type='user',
-                            resource_id=user.id, outcome='denied')
+    # Same lockout answer for existing and unknown addresses (no account enumeration).
+    if rate_limit.exceeded('login_fail_email', email) or (user and _account_locked(user)):
+        if user:
+            record_audit_safely('login_blocked', org_id=None, user_id=user.id, resource_type='user',
+                                resource_id=user.id, outcome='denied')
         minutes = int(LOGIN_WINDOW.total_seconds() // 60)
         return _error(f'Too many failed sign-in attempts. Try again in {minutes} minutes.', status_code=429)
-    if not user or not user.check_password(password):
-        _ip_throttled(request.remote_addr or 'unknown', record_failure=True)
+    # Always run one hash check so response time does not reveal whether the account exists.
+    password_ok = user.check_password(password) if user else check_password_hash(_DUMMY_HASH, password) and False
+    if not password_ok:
+        rate_limit.hit('login_fail_ip', ip)
+        rate_limit.hit('login_fail_email', email)
         if user:  # unknown e-mails are not recorded (no account to attribute them to)
             record_audit_safely('login_failed', org_id=None, user_id=user.id, resource_type='user',
                                 resource_id=user.id, outcome='failure')
         return _error('Invalid credentials', status_code=401)
 
-    if DEMO_EMAIL_VERIFICATION_BYPASS and (not user.is_active or not user.email_verified):
-        pass
-    elif not user.is_active:
-        return _error('Account not activated. Please verify your email.', status_code=403)
+    if not user.is_active:
+        if not user.email_verified and _verification_required():
+            return _error('Account not activated. Please verify your email.', status_code=403)
+        if user.email_verified:
+            return _error('Account disabled.', status_code=403)
+        # Accounts created while verification was off stay usable when it is off.
+    if user.password_needs_rehash():
+        user.set_password(password)  # upgrade the stored hash to scrypt
+        user.password_changed_at = None  # an upgrade is not a password change; keep other sessions
 
     # Create tokens
     access_token = create_access_token(identity=user.id)
@@ -324,26 +341,25 @@ def update_profile():
     }, status_code=200)
 @auth_bp.route('/forgot-password', methods=['POST'])
 def forgot_password():
-    """Request password reset."""
+    """Request a password reset (UC03). The answer never reveals whether the address exists."""
     payload = request.get_json() or {}
-    email = payload.get('email')
+    email = str(payload.get('email') or '').lower().strip()
+    if rate_limit.hit('forgot_ip', rate_limit.client_ip()) or (email and rate_limit.hit('forgot_email', email)):
+        return _too_many()
     delivery_configured = _mail_delivery_configured()
-    user = User.query.filter_by(email=email).first()
+    user = User.query.filter_by(email=email).first() if email else None
     if user and delivery_configured:
-        # Generate reset token
-        from app.models.user import EmailVerification
-        reset = EmailVerification.create_token(user.id)
+        # Only the newest reset link is valid.
+        EmailVerification.query.filter_by(user_id=user.id, purpose='reset', used=False).update({'used': True})
+        reset = EmailVerification.create_token(user.id, purpose='reset')
         db.session.add(reset)
         db.session.commit()
-        # Send email
-        try:
-            msg = Message('Password Reset Request', recipients=[email])
-            reset_url = _frontend_url(f"/reset-password?token={reset.token}")
-            msg.body = f"Reset your password: {reset_url}"
-            mail.send(msg)
-        except:
-            pass
-    # Always return success to prevent email enumeration.
+        reset_url = _frontend_url(f"/reset-password?token={reset.token}")
+        _send_mail_async(
+            'Password reset request', user.email,
+            f"A password reset was requested for your account.\n\nReset your password: {reset_url}\n"
+            "This link expires in 1 hour and works once. If you did not ask for it, ignore this message.",
+        )
     message = (
         'If that email is registered and password reset email delivery is configured, reset instructions will be sent.'
         if delivery_configured
@@ -356,13 +372,14 @@ def forgot_password():
 @auth_bp.route('/reset-password', methods=['POST'])
 def reset_password():
     """Reset password using a token from the forgot-password flow."""
+    if rate_limit.hit('reset_ip', rate_limit.client_ip()):
+        return _too_many()
     data = request.get_json() or {}
     token = data.get('token')
     new_password = data.get('new_password')
     if not token or not new_password:
         return _error('Token and new password required', status_code=400)
-    from app.models.user import EmailVerification
-    verification = EmailVerification.query.filter_by(token=token, used=False).first()
+    verification = EmailVerification.query.filter_by(token=token, used=False, purpose='reset').first()
     if not verification:
         return _error('Invalid or expired reset token', status_code=400)
     if verification.is_expired():
@@ -373,7 +390,7 @@ def reset_password():
     user = User.query.get(verification.user_id)
     if not user:
         return _error('User not found', status_code=404)
-    user.set_password(new_password)
+    user.set_password(new_password)  # also ends every existing session (password_changed_at)
     verification.used = True
     record_audit('password_reset', org_id=None, user_id=user.id, resource_type='user', resource_id=user.id)
     db.session.commit()
@@ -395,7 +412,12 @@ def change_password():
     valid, msg = is_valid_password(data.get('new_password'))
     if not valid:
         return _error(msg, status_code=400)
-    user.set_password(data['new_password'])
+    user.set_password(data['new_password'])  # ends every other session (password_changed_at)
     record_audit('password_changed', org_id=None, user_id=user.id, resource_type='user', resource_id=user.id)
     db.session.commit()
-    return _success({'message': 'Password changed successfully'})
+    # Fresh tokens for this browser; tokens issued before the change are now rejected.
+    return _success({
+        'message': 'Password changed successfully',
+        'access_token': create_access_token(identity=user.id),
+        'refresh_token': create_refresh_token(identity=user.id),
+    })

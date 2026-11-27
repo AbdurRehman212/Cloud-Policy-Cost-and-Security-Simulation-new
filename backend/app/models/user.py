@@ -17,6 +17,7 @@ class User(db.Model):
     email_verified = db.Column(db.Boolean, default=False)
     two_factor_enabled = db.Column(db.Boolean, default=False)
     two_factor_secret = db.Column(db.String(255))
+    password_changed_at = db.Column(db.DateTime)  # tokens issued before this are rejected
     # Relationships
     profile = db.relationship('UserProfile', backref='user', uselist=False)
     organizations = db.relationship(
@@ -31,8 +32,13 @@ class User(db.Model):
     )
     settings = db.relationship('UserSettings', backref='user', uselist=False)
     def set_password(self, password):
-        """Hash and set user password."""
-        self.password_hash = generate_password_hash(password, method='pbkdf2:sha256:100000')
+        """Hash with Werkzeug's current default (scrypt) and end all earlier sessions."""
+        self.password_hash = generate_password_hash(password)
+        self.password_changed_at = datetime.utcnow()
+
+    def password_needs_rehash(self):
+        """Hashes from earlier builds used PBKDF2 with 100k iterations (below OWASP guidance)."""
+        return not str(self.password_hash or '').startswith('scrypt:')
     def check_password(self, password):
         """Verify password against hash."""
         return check_password_hash(self.password_hash, password)
@@ -68,20 +74,23 @@ class EmailVerification(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
     token = db.Column(db.String(255), unique=True, nullable=False)
+    # 'verify' (e-mail verification) or 'reset' (password reset); a token works only for its purpose
+    purpose = db.Column(db.String(20), nullable=False, default='verify', server_default='verify')
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     expires_at = db.Column(db.DateTime, nullable=False)
     used = db.Column(db.Boolean, default=False)
     def is_expired(self):
         return datetime.utcnow() > self.expires_at
+    LIFETIME = {'verify': timedelta(hours=24), 'reset': timedelta(hours=1)}
+
     @staticmethod
-    def create_token(user_id):
-        """Create new verification token."""
-        token = secrets.token_urlsafe(32)
-        expires = datetime.utcnow() + timedelta(hours=24)
+    def create_token(user_id, purpose='verify'):
+        """Single-use random token; reset tokens live 1 hour, verification tokens 24 hours."""
         return EmailVerification(
             user_id=user_id,
-            token=token,
-            expires_at=expires
+            token=secrets.token_urlsafe(32),
+            purpose=purpose,
+            expires_at=datetime.utcnow() + EmailVerification.LIFETIME[purpose],
         )
 
 

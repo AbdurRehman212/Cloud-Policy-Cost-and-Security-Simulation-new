@@ -4,7 +4,7 @@ import axios from "axios";
 import toast from "react-hot-toast";
 import { EyeIcon, EyeSlashIcon } from "@heroicons/react/24/outline";
 import { switchOrganization } from "../../store/slices/organizationSlice";
-import { updateProfile } from "../../store/slices/authSlice";
+import { tokensRenewed, updateProfile } from "../../store/slices/authSlice";
 
 const API_URL = process.env.REACT_APP_API_URL || "/api";
 
@@ -109,12 +109,14 @@ export default function Profile() {
     }
     setChangingPwd(true);
     try {
-      await axios.post(
+      const response = await axios.post(
         `${API_URL}/auth/change-password`,
         { current_password: currentPwd, new_password: newPwd },
         { headers }
       );
-      toast.success("Password changed!");
+      const renewed = response?.data?.data;
+      if (renewed?.access_token) dispatch(tokensRenewed(renewed)); // other sessions are signed out
+      toast.success("Password changed! Other devices have been signed out.");
       setCurrentPwd("");
       setNewPwd("");
       setConfirmPwd("");

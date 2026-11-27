@@ -18,6 +18,11 @@ from app.models.resources import VirtualMachine, Database, ResourceStatus
 _snapshot_cache: dict[int, dict] = {}
 _cache_lock = threading.Lock()
 _cache_ttl = 2.0  # seconds between recomputes
+# Only organizations whose dashboard was requested recently are refreshed in the background.
+# Recomputing every organization every 2 s kept the single worker CPU-bound (measured: ~8.5 req/s
+# at ~95% CPU with five organizations; the development database has 245, nearly all idle).
+_ACTIVE_WINDOW_SECONDS = 60.0
+_last_requested: dict[int, float] = {}
 _control_plane_task = None
 _control_plane_lock = threading.Lock()
 
@@ -511,11 +516,15 @@ def get_org_snapshot(org_id: int, use_cache: bool = True) -> dict:
     """
     if use_cache:
         with _cache_lock:
+            _last_requested[org_id] = time.time()
             cached = _snapshot_cache.get(org_id)
-            if cached is not None:
-                snapshot = dict(cached)
-            else:
-                snapshot = _compute_org_snapshot(org_id)
+        if cached is not None:
+            snapshot = dict(cached)
+        else:
+            snapshot = _compute_org_snapshot(org_id)
+            snapshot.setdefault('timestamp', time.time())
+            with _cache_lock:
+                _snapshot_cache[org_id] = dict(snapshot)  # later requests within the TTL reuse it
     else:
         snapshot = _compute_org_snapshot(org_id)
 
@@ -1224,7 +1233,13 @@ def run_control_plane_loop():
     while True:
         t0 = time.time()
         try:
-            orgs = Organization.query.all()
+            now = time.time()
+            with _cache_lock:
+                active_ids = [oid for oid, seen in _last_requested.items() if now - seen <= _ACTIVE_WINDOW_SECONDS]
+                for oid in [oid for oid in _snapshot_cache if oid not in active_ids]:
+                    _snapshot_cache.pop(oid, None)  # nobody is viewing it; recompute on next request
+            orgs = (Organization.query.filter(Organization.id.in_(active_ids), Organization.is_active.isnot(False)).all()
+                    if active_ids else [])
             for org in orgs:
                 snap_t0 = time.time()
                 snapshot = _compute_org_snapshot(org.id)
