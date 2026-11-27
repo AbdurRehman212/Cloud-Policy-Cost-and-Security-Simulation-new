@@ -195,4 +195,6 @@ CodeQL Python and JavaScript succeeded with 0 open alerts; secret scanning 0 ale
 | GitHub | no protection on main; Dependabot off | ruleset "Protect main" (PR + 6 required checks, no force-push/deletion); Dependabot alerts + security updates on |
 | Historical credential S12 | `abdur` role password in published history | role does not exist on this server (verified); rotate/drop wherever it exists; the current app password was displayed in a support chat and should be rotated by the owner |
 
+| Dependabot (enabled in this pass) | 100 open alerts: 70 from `backend/requirements-ai.txt` (nltk incl. 3 critical, keras), an "optional, later phases" manifest that nothing installs or imports; 1 in e2e tooling (Playwright browser download without TLS verification); the rest are react-scripts tooling | unused manifest removed; Playwright 1.55.0 -> 1.55.1 (patch); Dependabot's own PRs #4 (qs/express, dev server) and #5 (react-router 7, major) left for the owner to review |
+
 Tests at the end of this pass: 145 backend (PostgreSQL), 31 Playwright, frontend build, 11 frontend unit tests.
