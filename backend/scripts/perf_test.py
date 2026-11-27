@@ -1,7 +1,7 @@
 """Performance test against a running backend on an ISOLATED database (never the real one).
 
 Usage (from backend/):
-  PERF_DB_URL=postgresql://user:pass@localhost/cloud_sim_perf PERF_API=http://localhost:5000/api \
+  PERF_DB_URL=postgresql://<user>:<password>@localhost/cloud_sim_perf PERF_API=http://127.0.0.1:5000/api \
       python scripts/perf_test.py
 
 Acceptance criteria (Chapter 6, Table 6.29):
